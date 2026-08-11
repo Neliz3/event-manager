@@ -2,7 +2,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('event-search');
   const organizerInput = document.getElementById('event-organizer');
   const dateInput = document.getElementById('event-date');
-  const capacityInput = document.getElementById('event-capacity');
+  const capacityMinInput = document.getElementById('event-capacity-min');
+  const capacityMaxInput = document.getElementById('event-capacity-max');
   const listEl = document.getElementById('event-list');
   let debounceTimer = null;
 
@@ -10,6 +11,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function formatDate(value) {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return escapeHtml(value);
+    return parsed.toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
   }
 
   function renderEvents(events) {
@@ -21,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     listEl.innerHTML = events
       .map((ev) => {
         const badge = ev.my_participation
-          ? `<span class="chip">${escapeHtml(ev.my_participation)}</span>`
+          ? `<span class="chip">${escapeHtml(ev.my_participation.status)}</span>`
           : '';
         return `
           <div class="col s12 m6 l4">
@@ -30,8 +40,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="card-title">
                   <a href="/events/${ev.id}/">${escapeHtml(ev.title)}</a>
                 </span>
-                <p>${ev.date}</p>
+                <p>${formatDate(ev.date)}</p>
                 <p>${escapeHtml(ev.format)} · ${escapeHtml(ev.access_type)} · capacity ${ev.capacity}</p>
+                ${ev.location ? `<p>Location: ${escapeHtml(ev.location)}</p>` : ''}
+                ${ev.description ? `<p>${escapeHtml(ev.description)}</p>` : ''}
                 <p>Organizer: ${escapeHtml(ev.organizer)}</p>
                 ${badge}
               </div>
@@ -46,7 +58,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (searchInput.value) params.set('search', searchInput.value);
     if (organizerInput.value) params.set('organizer_username', organizerInput.value);
     if (dateInput.value) params.set('date', dateInput.value);
-    if (capacityInput.value) params.set('capacity', capacityInput.value);
+    if (capacityMinInput.value) params.set('capacity_min', capacityMinInput.value);
+    if (capacityMaxInput.value) params.set('capacity_max', capacityMaxInput.value);
 
     const { ok, body } = await apiFetch(`/api/v1/events/?${params.toString()}`);
     if (!ok) {
@@ -61,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     debounceTimer = setTimeout(loadEvents, 300);
   }
 
-  [searchInput, organizerInput, capacityInput].forEach((el) =>
+  [searchInput, organizerInput, capacityMinInput, capacityMaxInput].forEach((el) =>
     el.addEventListener('input', debouncedLoad)
   );
   dateInput.addEventListener('change', loadEvents);

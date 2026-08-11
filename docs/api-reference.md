@@ -128,15 +128,20 @@ Auth required (cookie + CSRF for `PATCH`). Returns/updates
 
 List events visible to the requester. Public events are visible to
 everyone; private events are visible only to their organizer or a
-`CONFIRMED` participant. Anonymous users see only public events.
+participant with a live invitation/participation (`INVITED`,
+`CONFIRMED`, or `RECONFIRMATION_REQUIRED`). Anonymous users see only
+public events.
 
-Query params: `organizer_username`, `date` (matches the date part of the
-`date` field), `capacity` (exact match), `search` (case-insensitive
+Query params: `organizer_username` (case-insensitive exact match), `date`
+(matches the date part of the `date` field), `capacity_min` / `capacity_max`
+(inclusive range; either may be given alone), `search` (case-insensitive
 substring match against `title` or `description`).
 
-Each item includes `my_participation` (the requester's own participant
-`status`, or `null` if none) for authenticated requests; the field is
-omitted entirely for anonymous requests.
+Each item includes `id`, `title`, `description`, `date`, `format`,
+`location`, `access_type`, `capacity`, `organizer`, `created_at`, and
+`my_participation` (the requester's own participant `status`, or `null`
+if none) for authenticated requests; `my_participation` is omitted
+entirely for anonymous requests.
 
 ### `POST /api/v1/events/`
 
@@ -225,8 +230,8 @@ Auth required. Visibility (ADR 002 §7):
 - **Confirmed participant** — usernames only, of non-`cancelled`
   participants.
 - **Anyone else authenticated** — **403**.
-- **Event not visible to requester** (private, not organizer/confirmed) —
-  **404**.
+- **Event not visible to requester** (private, requester has no
+  organizer/invited/confirmed relationship to it) — **404**.
 
 ## Not part of the JSON API
 

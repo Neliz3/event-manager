@@ -59,10 +59,14 @@ async function refreshNav() {
   const loggedOutEls = document.querySelectorAll('[data-nav="logged-out"]');
   const loggedInEls = document.querySelectorAll('[data-nav="logged-in"]');
 
-  const { ok } = await apiFetch('/api/v1/users/me/');
+  const { ok, body } = await apiFetch('/api/v1/users/me/');
 
   loggedOutEls.forEach((el) => el.classList.toggle('hide', ok));
   loggedInEls.forEach((el) => el.classList.toggle('hide', !ok));
+
+  document.querySelectorAll('[data-nav-username]').forEach((el) => {
+    el.textContent = ok && body ? body.username : '';
+  });
 }
 
 async function logout() {

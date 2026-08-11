@@ -190,3 +190,4 @@ Ref: event_participants.user_id > users.id [delete: cascade]
 - **Organizer teams** — allow an event to be owned by a team of organizers instead of a single user, with shared permissions to edit/manage the event and its participants.
 - **Frontend** — a web client for the API (event browsing/search, registration flows, organizer dashboard), currently API-only with Swagger/Redoc for exploration.
 - **Invite non-users by email** — event invitations are keyed to an existing account's email; inviting an address with no registered account currently returns a "no account found" error. Supporting a pending, email-keyed invite that auto-attaches once that address signs up would let organizers invite people who haven't joined yet.
+- **Re-invite rejected/cancelled/invited participants, plus a support email in notifications**

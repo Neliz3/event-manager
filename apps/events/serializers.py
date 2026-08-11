@@ -47,8 +47,10 @@ class EventListSerializer(_MyParticipationMixin, serializers.ModelSerializer):
         fields = [
             "id",
             "title",
+            "description",
             "date",
             "format",
+            "location",
             "access_type",
             "capacity",
             "organizer",

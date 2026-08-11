@@ -9,17 +9,25 @@
 </head>
 <body>
   <nav class="teal darken-2">
-    <div class="nav-wrapper container">
-      <a href="{% url 'webui-home' %}" class="brand-logo">Event Manager</a>
-      <ul class="right">
-        <li><a href="{% url 'webui-events' %}">Events</a></li>
-        <li data-nav="logged-out"><a href="{% url 'webui-login' %}">Login</a></li>
-        <li data-nav="logged-out"><a href="{% url 'webui-register' %}">Register</a></li>
-        <li data-nav="logged-in" class="hide"><a href="{% url 'webui-event-create' %}">New event</a></li>
-        <li data-nav="logged-in" class="hide"><a href="{% url 'webui-account-profile' %}">Profile</a></li>
-        <li data-nav="logged-in" class="hide"><a href="{% url 'webui-account-password' %}">Account</a></li>
-        <li data-nav="logged-in" class="hide"><a href="#!" data-action="logout">Logout</a></li>
-      </ul>
+    <div class="nav-wrapper">
+      <span
+        class="grey-text text-lighten-3 hide"
+        data-nav="logged-in"
+        style="position: absolute; right: 1rem; top: 0; line-height: 64px; font-style: italic; font-weight: 300;"
+        data-nav-username
+      ></span>
+      <div class="container">
+        <a href="{% url 'webui-home' %}" class="brand-logo">Event Manager</a>
+        <ul class="right">
+          <li><a href="{% url 'webui-events' %}">Events</a></li>
+          <li data-nav="logged-out"><a href="{% url 'webui-login' %}">Login</a></li>
+          <li data-nav="logged-out"><a href="{% url 'webui-register' %}">Register</a></li>
+          <li data-nav="logged-in" class="hide"><a href="{% url 'webui-event-create' %}">New event</a></li>
+          <li data-nav="logged-in" class="hide"><a href="{% url 'webui-account-profile' %}">Profile</a></li>
+          <li data-nav="logged-in" class="hide"><a href="{% url 'webui-account-password' %}">Account</a></li>
+          <li data-nav="logged-in" class="hide"><a href="#!" data-action="logout">Logout</a></li>
+        </ul>
+      </div>
     </div>
   </nav>
 

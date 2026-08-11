@@ -238,10 +238,12 @@ logout with no body · `403` visible resource, insufficient permission ·
 **Public events:** anonymous users may list/view; authenticated users may
 additionally self-register; organizers manage their own events.
 
-**Private events:** visible only to the organizer or a confirmed
-participant. Not discoverable by anyone else → `404` (not `403`) on both
-list and detail. An authenticated user who *can* see the event but lacks
-permission for the attempted operation gets `403`.
+**Private events:** visible only to the organizer or a participant with a
+live invitation/participation (`invited`, `confirmed`, or
+`reconfirmation_required`) — an invited user must be able to load the event
+to see the accept/decline controls. Not discoverable by anyone else → `404`
+(not `403`) on both list and detail. An authenticated user who *can* see
+the event but lacks permission for the attempted operation gets `403`.
 
 **Participant list (`GET /events/{id}/participants/`):**
 - Organizer/admin: full data, including email and status.

@@ -35,12 +35,14 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="btn waves-effect waves-light" data-action="accept">Accept invitation</button>
         <button class="btn-flat waves-effect" data-action="reject">Reject</button>`;
     }
-    if (status === 'confirmed' || status === 'reconfirmation_required') {
-      const notice =
-        status === 'reconfirmation_required'
-          ? '<p class="orange-text text-darken-2">This event changed since you confirmed — please reconfirm.</p>'
-          : '';
-      return `${notice}<button class="btn waves-effect waves-light" data-action="cancel">Cancel participation</button>`;
+    if (status === 'reconfirmation_required') {
+      return `
+        <p class="orange-text text-darken-2">This event changed since you confirmed — please reconfirm.</p>
+        <button class="btn waves-effect waves-light" data-action="accept">Reconfirm</button>
+        <button class="btn-flat waves-effect" data-action="cancel">Cancel participation</button>`;
+    }
+    if (status === 'confirmed') {
+      return '<button class="btn waves-effect waves-light" data-action="cancel">Cancel participation</button>';
     }
     // null, rejected, or cancelled — free to (re-)register.
     return '<button class="btn waves-effect waves-light" data-action="register">Register</button>';

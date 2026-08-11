@@ -3,7 +3,7 @@
 {% block title %}Events{% endblock %}
 {% block content %}
 <div class="row">
-  <div class="col s12 m6">
+  <div class="col s12 m4">
     <div class="input-field">
       <i class="material-icons prefix">search</i>
       <input id="event-search" type="text">
@@ -24,8 +24,14 @@
   </div>
   <div class="col s12 m2">
     <div class="input-field">
-      <input id="event-capacity" type="number" min="1">
-      <label for="event-capacity">Capacity</label>
+      <input id="event-capacity-min" type="number" min="1">
+      <label for="event-capacity-min">Min capacity</label>
+    </div>
+  </div>
+  <div class="col s12 m2">
+    <div class="input-field">
+      <input id="event-capacity-max" type="number" min="1">
+      <label for="event-capacity-max">Max capacity</label>
     </div>
   </div>
 </div>

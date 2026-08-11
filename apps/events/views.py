@@ -33,14 +33,22 @@ from .serializers import (
 
 def visible_events_queryset(user):
     """Private events are only discoverable by their organizer or a
-    confirmed participant (§7); everyone else must not find them via
-    list/detail (404, not 403).
+    participant with a live invitation/participation (§7); everyone else
+    must not find them via list/detail (404, not 403).
+
+    Invited/reconfirmation-required participants are included alongside
+    confirmed ones — otherwise a just-invited user could never load the
+    event to see the accept/decline controls.
     """
     visible = Q(access_type=Event.AccessType.PUBLIC)
     if user is not None and user.is_authenticated:
         visible |= Q(organizer=user) | Q(
             participants__user=user,
-            participants__status=EventParticipant.Status.CONFIRMED,
+            participants__status__in=(
+                EventParticipant.Status.CONFIRMED,
+                EventParticipant.Status.INVITED,
+                EventParticipant.Status.RECONFIRMATION_REQUIRED,
+            ),
         )
     return Event.objects.filter(visible).distinct()
 
@@ -48,7 +56,7 @@ def visible_events_queryset(user):
 class EventListCreateView(generics.ListCreateAPIView):
     """GET/POST /api/v1/events/
 
-    Filters: organizer_username, date, capacity, search (ADR 002).
+    Filters: organizer_username (case-insensitive), date, capacity_min/capacity_max, search (ADR 002).
     """
 
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -63,15 +71,19 @@ class EventListCreateView(generics.ListCreateAPIView):
 
         organizer_username = self.request.query_params.get("organizer_username")
         if organizer_username:
-            qs = qs.filter(organizer__username=organizer_username)
+            qs = qs.filter(organizer__username__iexact=organizer_username)
 
         date = self.request.query_params.get("date")
         if date:
             qs = qs.filter(date__date=date)
 
-        capacity = self.request.query_params.get("capacity")
-        if capacity:
-            qs = qs.filter(capacity=capacity)
+        capacity_min = self.request.query_params.get("capacity_min")
+        if capacity_min:
+            qs = qs.filter(capacity__gte=capacity_min)
+
+        capacity_max = self.request.query_params.get("capacity_max")
+        if capacity_max:
+            qs = qs.filter(capacity__lte=capacity_max)
 
         search = self.request.query_params.get("search")
         if search:
@@ -123,12 +135,12 @@ class EventDetailView(generics.RetrieveUpdateDestroyAPIView):
         write_serializer.is_valid(raise_exception=True)
         event = write_serializer.save()
 
-        self._notify_reconfirmation_required(event, before)
+        self._notify_reconfirmation_required(request, event, before)
 
         read_serializer = EventDetailSerializer(event, context=self.get_serializer_context())
         return Response(read_serializer.data, status=status.HTTP_200_OK)
 
-    def _notify_reconfirmation_required(self, event, before):
+    def _notify_reconfirmation_required(self, request, event, before):
         changed_fields = [
             field
             for field in self.RECONFIRMATION_TRIGGER_FIELDS
@@ -136,6 +148,10 @@ class EventDetailView(generics.RetrieveUpdateDestroyAPIView):
         ]
         if not changed_fields:
             return
+
+        event_link = request.build_absolute_uri(
+            reverse("webui-event-detail", args=[event.id])
+        )
 
         for participant in event.participants.filter(
             status=EventParticipant.Status.CONFIRMED
@@ -145,6 +161,7 @@ class EventDetailView(generics.RetrieveUpdateDestroyAPIView):
                 send_reconfirmation_required,
                 participant,
                 changed_fields=" and ".join(changed_fields),
+                event_link=event_link,
             )
 
 
