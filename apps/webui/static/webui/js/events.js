@@ -1,5 +1,8 @@
 document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('event-search');
+  const organizerInput = document.getElementById('event-organizer');
+  const dateInput = document.getElementById('event-date');
+  const capacityInput = document.getElementById('event-capacity');
   const listEl = document.getElementById('event-list');
   let debounceTimer = null;
 
@@ -24,7 +27,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="col s12 m6 l4">
             <div class="card">
               <div class="card-content">
-                <span class="card-title">${escapeHtml(ev.title)}</span>
+                <span class="card-title">
+                  <a href="/events/${ev.id}/">${escapeHtml(ev.title)}</a>
+                </span>
                 <p>${ev.date}</p>
                 <p>${escapeHtml(ev.format)} · ${escapeHtml(ev.access_type)} · capacity ${ev.capacity}</p>
                 <p>Organizer: ${escapeHtml(ev.organizer)}</p>
@@ -39,6 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadEvents() {
     const params = new URLSearchParams();
     if (searchInput.value) params.set('search', searchInput.value);
+    if (organizerInput.value) params.set('organizer_username', organizerInput.value);
+    if (dateInput.value) params.set('date', dateInput.value);
+    if (capacityInput.value) params.set('capacity', capacityInput.value);
 
     const { ok, body } = await apiFetch(`/api/v1/events/?${params.toString()}`);
     if (!ok) {
@@ -48,10 +56,15 @@ document.addEventListener('DOMContentLoaded', () => {
     renderEvents(body.results || body);
   }
 
-  searchInput.addEventListener('input', () => {
+  function debouncedLoad() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(loadEvents, 300);
-  });
+  }
+
+  [searchInput, organizerInput, capacityInput].forEach((el) =>
+    el.addEventListener('input', debouncedLoad)
+  );
+  dateInput.addEventListener('change', loadEvents);
 
   loadEvents();
 });

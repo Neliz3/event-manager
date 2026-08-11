@@ -1,0 +1,11 @@
+{% extends 'webui/base.html' %}
+{% load static %}
+{% block title %}Event{% endblock %}
+{% block content %}
+<div class="row" id="event-detail" data-event-id="{{ event_id }}">
+  <p>Loading event…</p>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="{% static 'webui/js/event_detail.js' %}"></script>
+{% endblock %}

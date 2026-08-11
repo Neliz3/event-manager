@@ -1,0 +1,53 @@
+{% extends 'webui/base.html' %}
+{% load static %}
+{% block title %}{% if event_id %}Edit event{% else %}New event{% endif %}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col s12 m10 offset-m1 l8 offset-l2">
+    <h4>{% if event_id %}Edit event{% else %}New event{% endif %}</h4>
+
+    <form id="event-form" {% if event_id %}data-event-id="{{ event_id }}"{% endif %}>
+      <div class="input-field">
+        <input id="title" name="title" type="text" required>
+        <label for="title">Title</label>
+      </div>
+      <div class="input-field">
+        <textarea id="description" name="description" class="materialize-textarea"></textarea>
+        <label for="description">Description</label>
+      </div>
+      <div class="input-field">
+        <input id="date" name="date" type="datetime-local" required>
+        <label for="date" class="active">Date</label>
+      </div>
+      <div class="input-field">
+        <select id="format" name="format" class="browser-default" required>
+          <option value="online">Online</option>
+          <option value="offline">Offline</option>
+        </select>
+        <label for="format" class="active">Format</label>
+      </div>
+      <div class="input-field" id="location-field">
+        <input id="location" name="location" type="text">
+        <label for="location">Location</label>
+      </div>
+      <div class="input-field">
+        <select id="access_type" name="access_type" class="browser-default" required {% if event_id %}disabled{% endif %}>
+          <option value="public">Public</option>
+          <option value="private">Private</option>
+        </select>
+        <label for="access_type" class="active">Access type{% if event_id %} (cannot be changed){% endif %}</label>
+      </div>
+      <div class="input-field">
+        <input id="capacity" name="capacity" type="number" min="1" required>
+        <label for="capacity">Capacity</label>
+      </div>
+      <button class="btn waves-effect waves-light" type="submit">
+        Save <i class="material-icons right">save</i>
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="{% static 'webui/js/event_form.js' %}"></script>
+{% endblock %}

@@ -15,6 +15,8 @@
         <li><a href="{% url 'webui-events' %}">Events</a></li>
         <li data-nav="logged-out"><a href="{% url 'webui-login' %}">Login</a></li>
         <li data-nav="logged-out"><a href="{% url 'webui-register' %}">Register</a></li>
+        <li data-nav="logged-in" class="hide"><a href="{% url 'webui-event-create' %}">New event</a></li>
+        <li data-nav="logged-in" class="hide"><a href="{% url 'webui-account-profile' %}">Profile</a></li>
         <li data-nav="logged-in" class="hide"><a href="{% url 'webui-account-password' %}">Account</a></li>
         <li data-nav="logged-in" class="hide"><a href="#!" data-action="logout">Logout</a></li>
       </ul>

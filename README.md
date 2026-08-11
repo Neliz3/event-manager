@@ -41,6 +41,10 @@ docker compose down            # stop everything
 
 If a queued email never arrives, check `worker` is up. A job that's failed 3 retries lands in RQ's FailedJobRegistry — inspect with `docker compose exec app python manage.py rqstats`.
 
+### Checking emails
+
+The app never sends real email in dev — everything (verification, password reset, event notifications) is caught by Mailpit. Open **http://localhost:8025/** to see the inbox: click a message to view its rendered HTML/text body, headers, and any links (e.g. the verification/reset token link) to copy or click directly.
+
 ## Test
 
 ```bash

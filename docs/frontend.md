@@ -45,16 +45,26 @@ succeeds, and wires up `[data-action="logout"]` to
 
 ## Routes
 
-| Path                  | View                    | Template                       | Calls |
-|------------------------|-------------------------|---------------------------------|-------|
-| `/`                    | `HomeView`               | `webui/home.html`               | — |
-| `/register/`           | `RegisterPageView`       | `webui/register.html`           | `POST /api/v1/auth/register/`, then `POST /api/v1/auth/email-verification/request/` (registration doesn't send a verification email on its own) |
-| `/login/`              | `LoginPageView`          | `webui/login.html`              | `POST /api/v1/auth/login/`; on `403 email_not_verified`, offers a resend button hitting `/api/v1/auth/email-verification/request/` |
-| `/account/password/`   | `PasswordChangePageView` | `webui/account_password.html`   | `POST /api/v1/auth/password/change/` (this revokes all sessions server-side, so the page redirects to `/login/` on success) |
-| `/events/`             | `EventListPageView`      | `webui/events_list.html`        | `GET /api/v1/events/?search=...` — debounced search box; reuses the `search`/`organizer_username`/`date`/`capacity` filters already implemented in `EventListCreateView.get_queryset()` (`apps/events/views.py`) |
+| Path                          | View                            | Template                       | Calls |
+|--------------------------------|----------------------------------|---------------------------------|-------|
+| `/`                            | `HomeView`                       | `webui/home.html`               | — |
+| `/register/`                   | `RegisterPageView`               | `webui/register.html`           | `POST /api/v1/auth/register/`, then `POST /api/v1/auth/email-verification/request/` (registration doesn't send a verification email on its own) |
+| `/login/`                      | `LoginPageView`                  | `webui/login.html`              | `POST /api/v1/auth/login/`; on `403 email_not_verified`, offers a resend button hitting `/api/v1/auth/email-verification/request/` |
+| `/password-reset/`             | `PasswordResetRequestPageView`   | `webui/password_reset_request.html` | `POST /api/v1/auth/password/reset/request/` (always 200; doesn't leak account existence) |
+| `/account/password/`           | `PasswordChangePageView`         | `webui/account_password.html`   | `POST /api/v1/auth/password/change/` (this revokes all sessions server-side, so the page redirects to `/login/` on success) |
+| `/account/profile/`            | `ProfilePageView`                | `webui/profile.html`            | `GET /api/v1/users/me/` to populate the form, `PATCH /api/v1/users/me/` to save the username (`id`/`email` are read-only) |
+| `/events/`                     | `EventListPageView`              | `webui/events_list.html`        | `GET /api/v1/events/?search=...&organizer_username=...&date=...&capacity=...` — all four filters supported by `EventListCreateView.get_queryset()` (`apps/events/views.py`) are wired up: `search`/`organizer_username`/`capacity` are debounced text/number inputs, `date` reloads on change |
+| `/events/new/`                 | `EventCreatePageView`            | `webui/event_form.html`         | `POST /api/v1/events/`, redirects to the new event's detail page |
+| `/events/<uuid:event_id>/`     | `EventDetailPageView`            | `webui/event_detail.html`       | `GET /api/v1/events/{id}/`, plus organizer-only `DELETE .../`, `POST .../invite/`, `GET .../participants/`, and participant-only `POST .../register/\|accept/\|reject/\|cancel/` depending on `my_participation.status` |
+| `/events/<uuid:event_id>/edit/`| `EventEditPageView`              | `webui/event_form.html`         | `GET /api/v1/events/{id}/` to prefill, `PATCH /api/v1/events/{id}/` to save (organizer only; `access_type` is immutable so the field is disabled) |
 
 All routes are mounted at the URL root via `path('', include('apps.webui.urls'))`
 in `config/urls.py`, ahead of `/api/v1/...`.
+
+## API coverage gaps
+
+None — the UI now covers all of `docs/api-reference.md`'s auth and events
+surface described above (see Routes).
 
 ## Pre-existing server-rendered pages
 
