@@ -4,6 +4,12 @@ FROM python:3.14-slim
 # to keep it independent of whatever's in the base image's site-packages.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
+# cron: only used by the `cron` service (CMD below stays `runserver` for
+# `app`/`worker`), but installing it in the shared image is simpler than a
+# second Dockerfile.
+RUN apt-get update && apt-get install -y --no-install-recommends cron \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

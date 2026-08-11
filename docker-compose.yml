@@ -16,11 +16,26 @@ services:
       timeout: 5s
       retries: 5
 
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "8025:8025"  # web UI — view caught emails at http://localhost:8025
+      - "1025:1025"  # SMTP endpoint the app/worker send to
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
   app:
     build: .
     depends_on:
       db:
         condition: service_healthy
+      mailpit:
+        condition: service_started
+      redis:
+        condition: service_started
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required, see .env.example}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required, see .env.example}
@@ -28,10 +43,55 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY is required, see .env.example}
       JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required, see .env.example}
       POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - .:/app
     ports:
       - "8000:8000"
+
+  # Runs the RQ worker consuming the 'default' queue (email sends, §5) —
+  # same image as `app`, just a different process, kept symmetric with how
+  # db/app/mailpit/redis are already run rather than managed out-of-band.
+  worker:
+    build: .
+    command: python manage.py rqworker default
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required, see .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required, see .env.example}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required, see .env.example}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY is required, see .env.example}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required, see .env.example}
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - .:/app
+
+  # Registers CRONJOBS (config/settings.py) with system cron, then runs it
+  # in the foreground — separate from `app` so scaling `app` never
+  # duplicates job runs.
+  cron:
+    build: .
+    command: sh -c "python manage.py crontab add && cron -f"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required, see .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required, see .env.example}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required, see .env.example}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY is required, see .env.example}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required, see .env.example}
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - .:/app
 
 volumes:
   pgdata:

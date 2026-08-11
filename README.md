@@ -1,85 +1,136 @@
 # Event Manager
 
-A Django REST API for managing events (conferences, meetups, etc.). Supports creating, viewing, updating, and deleting events, as well as handling user registrations for them.
-
+Django REST API for managing events: create/view/update/delete events, register/invite/accept/reject/cancel participants.
 
 ## Setup
 
-### 1. Local Env
+### 1. Configure env
 
 ```bash
 cp .env.example .env
-uv run python -c "from django.core.management.utils import get_random_secret_key; print (get_random_secret_key())"
+uv run python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 ```
 
-Paste the output into `.env` as `DJANGO_SECRET_KEY=...`, and fill in
-`POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`.
+Paste the output into `.env` as `DJANGO_SECRET_KEY`, run it again for `JWT_SIGNING_KEY`, and fill in `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`.
 
-### 2. Run via Docker
+### 2. Start everything
 
 ```bash
 docker compose up --build -d
-docker compose run --rm app uv run python manage.py migrate
+docker compose run --rm app python manage.py migrate
+docker compose exec app python manage.py createsuperuser
 ```
 
-App: `http://localhost:8000`
+This starts `db`, `app`, `mailpit`, `redis`, `worker`, and `cron` together — nothing else to run separately:
+
+| Service  | Role |
+|----------|------|
+| `app`    | Django API — `http://localhost:8000` |
+| `db`     | PostgreSQL |
+| `mailpit`| Catches outbound email in dev — view at `http://localhost:8025`, no config needed |
+| `redis`  | Backs the RQ task queue |
+| `worker` | Sends queued emails (verification, password reset, event notifications) |
+| `cron`   | Runs the scheduled jobs in `CRONJOBS` (`config/settings.py`): hourly `cleanup_expired_tokens`, and `expire_reconfirmations` every 15 min |
 
 ```bash
-docker compose logs -f app   # logs
-docker compose down          # stop
+docker compose logs -f app     # app logs
+docker compose logs -f worker  # email-send logs
+docker compose logs -f cron    # scheduled-job runs
+docker compose down            # stop everything
 ```
 
+If a queued email never arrives, check `worker` is up. A job that's failed 3 retries lands in RQ's FailedJobRegistry — inspect with `docker compose exec app python manage.py rqstats`.
 
-### 3. Create superuser
+## Test
 
 ```bash
-docker compose exec app uv run python manage.py createsuperuser
+docker compose ps                                   # all 6 services "running"/"healthy"
+docker compose run --rm app python manage.py test    # full test suite
 ```
 
-### 4. Model changes / migrations
+## Database schema
+
+Core tables per ADR 001, updated to match the actual migrations (the ADR
+predates implementation and doesn't list `AbstractUser`'s built-in fields
+or the `reconfirmation_deadline` column added since). Auth also adds
+`RefreshTokenFamily`/`RefreshTokenRecord`, `EmailVerificationToken`, and
+`PasswordResetToken` (ADR 003), all FK'd to `users`.
+
+```dbml
+Table users {
+  id bigint [pk, increment]
+  username varchar(150) [not null]
+  email varchar(254) [not null, unique]
+  password varchar(128) [not null]
+
+  // AbstractUser fields, not in ADR 001's dbml
+  first_name varchar(150)
+  last_name varchar(150)
+  is_staff boolean [not null, default: false]
+  is_active boolean [not null, default: true]
+  is_superuser boolean [not null, default: false]
+  last_login timestamp
+  date_joined timestamp [not null]
+
+  // added since ADR 001 (email verification, §2)
+  is_email_verified boolean [not null, default: false]
+}
+
+Table events {
+  id uuid [pk]
+  title varchar(255) [not null]
+  description text
+  date timestamp [not null]
+
+  format varchar(10) [not null, note: 'enum: online, offline']
+  location varchar(255) [note: 'required for offline events, null for online events']
+
+  access_type varchar(10) [not null, note: 'public | private']
+  capacity int [not null, note: 'must be > 0']
+  organizer_id bigint [not null]
+
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table event_participants {
+  id uuid [pk]
+
+  event_id uuid [not null]
+  user_id bigint [not null]
+
+  status varchar(24) [not null, note: 'invited | confirmed | rejected | cancelled | reconfirmation_required']
+
+  // added since ADR 001 (§6 reconfirmation expiry)
+  reconfirmation_deadline timestamp [note: 'set when status = reconfirmation_required, else null']
+
+  updated_at timestamp
+
+  indexes {
+    (event_id, user_id) [unique]
+    (event_id, status)
+  }
+}
+
+Ref: events.organizer_id > users.id [delete: restrict]
+
+Ref: event_participants.event_id > events.id [delete: cascade]
+Ref: event_participants.user_id > users.id [delete: cascade]
+```
+
+## Everyday commands
 
 ```bash
+# migrations
 docker compose exec app python manage.py makemigrations users events
 docker compose exec app python manage.py migrate
-docker compose exec app python manage.py check
-```
 
-**Future improvement**: the `app` image doesn't currently install the
-system `cron` package or run `crontab add`, so `django-crontab`'s
-`CRONJOBS` setting is inert — `cleanup_expired_tokens` must be run
-manually (above) until this is wired up. Add a separate `cron` service in
-`docker-compose.yml` (same image, `command` running `crontab add && cron -f`
-instead of `runserver`, with `cron` installed via `apt-get` in the
-Dockerfile for that service) rather than bolting cron onto the `app`
-container — avoids duplicate cleanup runs if `app` is ever scaled to
-multiple replicas.
-
-### 5. Tests
-
-```bash
+# tests
 docker compose run --rm app python manage.py test
 ```
 
-### 6. API docs (Swagger)
+## API docs
 
-With the app running, open the Swagger UI in your browser:
+With the app running: `http://127.0.0.1:8000/api/docs/` (Swagger, interactive) · `/api/redoc/` (read-only) · `/api/schema/` (raw OpenAPI YAML).
 
-`http://127.0.0.1:8000/api/docs/`
-
-- `/api/docs/` — Swagger UI (interactive, "Try it out" buttons to actually call endpoints)
-- `/api/redoc/` — ReDoc (read-only, nicer for browsing)
-- `/api/schema/` — raw OpenAPI 3 YAML schema, auto-generated from your serializers/views
-
-Auth is cookie-based (`access_token` / `refresh_token` are set as HttpOnly
-cookies on login), so once you're logged in Swagger UI just works — no need
-to paste a token into the "Authorize" button.
-
-**Troubleshooting: Swagger UI shows no endpoints, just "401 Unauthorized"**
-
-This means a stale/expired `access_token` cookie from a previous session is
-being sent with the request for the schema itself, which fails
-authentication before permissions are even checked. Fix:
-
-1. Open DevTools → Application/Storage → Cookies → `http://127.0.0.1:8000`.
-2. Delete `access_token` and `refresh_token` cookies.
-3. Reload `http://127.0.0.1:8000/api/docs/`.
+Auth is cookie-based — log in once and Swagger UI works without pasting a token. If `/api/docs/` shows a bare 401, a stale `access_token`/`refresh_token` cookie is being sent with the schema request itself; clear those two cookies for `127.0.0.1:8000` and reload.

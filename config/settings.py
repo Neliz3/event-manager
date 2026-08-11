@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import sys
 from pathlib import Path
 
 import environ
@@ -41,6 +42,7 @@ AUTH_USER_MODEL = 'users.User'
 INSTALLED_APPS = [
     'apps.users',
     'apps.events',
+    'apps.notifications',
 
     'django.contrib.admin',
     'django.contrib.auth',
@@ -54,6 +56,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     'drf_spectacular',
     'django_crontab',
+    'django_rq',
 ]
 
 MIDDLEWARE = [
@@ -138,14 +141,26 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 
-# Email
+# Email (docs/email-integration-spec.md §4)
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
+# Dev: SMTP to Mailpit (docker-compose service) for a real, clickable inbox.
+# Tests: Django's test runner overrides TestCase's mailer to locmem
+# automatically regardless of this setting, so `mail.outbox` works without
+# Mailpit being up.
 
 MAILERS = {
     'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        'BACKEND': env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend'),
+        'OPTIONS': {
+            'host': env('EMAIL_HOST', default='mailpit'),
+            'port': env.int('EMAIL_PORT', default=1025),
+            'use_tls': env.bool('EMAIL_USE_TLS', default=False),
+            'username': env('EMAIL_HOST_USER', default=''),
+            'password': env('EMAIL_HOST_PASSWORD', default=''),
+        },
     },
 }
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@example.com')
 
 
 # Django REST Framework
@@ -174,6 +189,8 @@ REST_FRAMEWORK = {
         'login-ip': '20/min',
         'password-reset': '5/min',
         'password-reset-ip': '20/min',
+        'email-verification': '5/min',
+        'email-verification-ip': '20/min',
         'refresh': '30/min',
         'register': '10/hour',
     },
@@ -237,4 +254,33 @@ AUTH_CSRF_COOKIE_NAME = 'csrf_token'
 # to be run once per deployment to register this with system cron.
 CRONJOBS = [
     ('0 * * * *', 'django.core.management.call_command', ['cleanup_expired_tokens']),
+    ('*/15 * * * *', 'django.core.management.call_command', ['expire_reconfirmations']),
 ]
+
+
+# Task queue (docs/email-integration-spec.md §5) — RQ, not Celery: the only
+# async need is send-email-after-commit plus §6's future periodic TTL job,
+# which doesn't justify Celery's broker tuning/beat scheduler/Flower.
+# `worker` (docker-compose) runs `manage.py rqworker default` against this
+# same queue. ASYNC=False lets tests run jobs inline against a real Redis
+# without a separate worker process.
+_running_tests = 'test' in sys.argv
+_redis_url = env('REDIS_URL', default='redis://redis:6379/0')
+if _running_tests:
+    # Redirect to a separate Redis DB (15, never listened to by `worker`)
+    # instead of whatever DB REDIS_URL points at — otherwise, when a test
+    # deliberately leaves a job ASYNC/queued (e.g. to inspect its retry
+    # policy), the real `worker` process racing against the same Redis
+    # instance can dequeue and run it before the assertion runs.
+    _redis_url = _redis_url.rsplit('/', 1)[0] + '/15'
+
+RQ_QUEUES = {
+    'default': {
+        'URL': _redis_url,
+        'DEFAULT_TIMEOUT': 360,
+        # default False under `manage.py test` (see comment above) so jobs
+        # run inline instead of sitting unconsumed in Redis; overridable
+        # via RQ_ASYNC either way.
+        'ASYNC': env.bool('RQ_ASYNC', default=not _running_tests),
+    },
+}
