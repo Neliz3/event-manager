@@ -48,6 +48,27 @@ docker compose ps                                   # all 6 services "running"/"
 docker compose run --rm app python manage.py test    # full test suite
 ```
 
+## Everyday commands
+
+```bash
+# migrations
+docker compose exec app python manage.py makemigrations users events
+docker compose exec app python manage.py migrate
+
+# tests
+docker compose run --rm app python manage.py test
+```
+
+## API docs
+
+With the app running: `http://127.0.0.1:8000/api/docs/` (Swagger, interactive) · `/api/redoc/` (read-only) · `/api/schema/` (raw OpenAPI YAML).
+
+Auth is cookie-based — log in once and Swagger UI works without pasting a token. If `/api/docs/` shows a bare 401, a stale `access_token`/`refresh_token` cookie is being sent with the schema request itself; clear those two cookies for `127.0.0.1:8000` and reload.
+
+For a hand-written walkthrough of every route (request/response shapes,
+error codes, visibility and idempotency rules), see
+[`docs/api-reference.md`](docs/api-reference.md).
+
 ## Database schema
 
 Core tables per ADR 001, updated to match the actual migrations (the ADR
@@ -55,6 +76,47 @@ predates implementation and doesn't list `AbstractUser`'s built-in fields
 or the `reconfirmation_deadline` column added since). Auth also adds
 `RefreshTokenFamily`/`RefreshTokenRecord`, `EmailVerificationToken`, and
 `PasswordResetToken` (ADR 003), all FK'd to `users`.
+
+```mermaid
+erDiagram
+    users ||--o{ events : organizes
+    users ||--o{ event_participants : participates
+    events ||--o{ event_participants : has
+
+    users {
+        bigint id PK
+        varchar username
+        varchar email UK
+        varchar password
+        boolean is_email_verified
+        boolean is_staff
+        boolean is_active
+        boolean is_superuser
+    }
+
+    events {
+        uuid id PK
+        varchar title
+        text description
+        timestamp date
+        varchar format "online | offline"
+        varchar location
+        varchar access_type "public | private"
+        int capacity
+        bigint organizer_id FK
+    }
+
+    event_participants {
+        uuid id PK
+        uuid event_id FK
+        bigint user_id FK
+        varchar status "invited | confirmed | rejected | cancelled | reconfirmation_required"
+        timestamp reconfirmation_deadline
+    }
+```
+
+Want to explore it interactively (drag tables, export SQL/images)? Paste the
+DBML block below into [dbdiagram.io](https://dbdiagram.io/).
 
 ```dbml
 Table users {
@@ -117,20 +179,3 @@ Ref: events.organizer_id > users.id [delete: restrict]
 Ref: event_participants.event_id > events.id [delete: cascade]
 Ref: event_participants.user_id > users.id [delete: cascade]
 ```
-
-## Everyday commands
-
-```bash
-# migrations
-docker compose exec app python manage.py makemigrations users events
-docker compose exec app python manage.py migrate
-
-# tests
-docker compose run --rm app python manage.py test
-```
-
-## API docs
-
-With the app running: `http://127.0.0.1:8000/api/docs/` (Swagger, interactive) · `/api/redoc/` (read-only) · `/api/schema/` (raw OpenAPI YAML).
-
-Auth is cookie-based — log in once and Swagger UI works without pasting a token. If `/api/docs/` shows a bare 401, a stale `access_token`/`refresh_token` cookie is being sent with the schema request itself; clear those two cookies for `127.0.0.1:8000` and reload.

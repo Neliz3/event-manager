@@ -204,7 +204,8 @@ Admin-specific endpoints are not yet specced beyond what's above.
 
 ### Filtering & pagination
 
-- Event list filters: `organizer_username`, `date`, `capacity`.
+- Event list filters: `organizer_username`, `date`, `capacity`, `search`
+  (case-insensitive substring match against `title` or `description`).
 - Page-based pagination: `?page=2&page_size=20`.
 - Participant list filter: `?status=confirmed`.
 

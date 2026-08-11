@@ -47,7 +47,7 @@ def visible_events_queryset(user):
 class EventListCreateView(generics.ListCreateAPIView):
     """GET/POST /api/v1/events/
 
-    Filters: organizer_username, date, capacity (ADR 002).
+    Filters: organizer_username, date, capacity, search (ADR 002).
     """
 
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -71,6 +71,10 @@ class EventListCreateView(generics.ListCreateAPIView):
         capacity = self.request.query_params.get("capacity")
         if capacity:
             qs = qs.filter(capacity=capacity)
+
+        search = self.request.query_params.get("search")
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(description__icontains=search))
 
         return qs
 

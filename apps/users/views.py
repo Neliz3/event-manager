@@ -384,11 +384,41 @@ class EmailVerificationConfirmPageView(APIView):
         return render(request, template, status=200)
 
 
-class PasswordChangeView(_NotImplementedAuthView):
+class PasswordChangeView(APIView):
     """POST /api/v1/auth/password/change/"""
 
     permission_classes = [permissions.IsAuthenticated, CookieCSRFPermission]
     serializer_class = PasswordChangeSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        if not user.check_password(serializer.validated_data["old_password"]):
+            return Response(
+                {
+                    "error": {
+                        "code": "invalid_old_password",
+                        "message": "Current password is incorrect.",
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+
+        # Changing the password ends every other session too, same as a
+        # reset (ADR 003 revocation posture): revoke all refresh token
+        # families so previously issued refresh tokens stop working.
+        RefreshTokenFamily.objects.filter(user=user, revoked_at__isnull=True).update(
+            revoked_at=timezone.now()
+        )
+
+        response = Response(status=status.HTTP_200_OK)
+        _clear_auth_cookies(response)
+        return response
 
 
 class PasswordResetRequestView(APIView):
