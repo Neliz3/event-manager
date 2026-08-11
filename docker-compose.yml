@@ -26,6 +26,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required, see .env.example}
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required, see .env.example}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY is required, see .env.example}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required, see .env.example}
       POSTGRES_HOST: db
     volumes:
       - .:/app

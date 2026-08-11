@@ -51,7 +51,9 @@ INSTALLED_APPS = [
 
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'drf_spectacular',
+    'django_crontab',
 ]
 
 MIDDLEWARE = [
@@ -155,6 +157,7 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
+        'apps.users.permissions.CookieCSRFPermission',
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
@@ -163,6 +166,17 @@ REST_FRAMEWORK = {
     # while leaving DRF's default field-error shape for validation errors.
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # Rates differ per endpoint (ADR 003 "rate limiting on auth endpoints"),
+    # so throttle_classes are attached per-view rather than globally; the
+    # rates themselves are still declared centrally here.
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '5/min',
+        'login-ip': '20/min',
+        'password-reset': '5/min',
+        'password-reset-ip': '20/min',
+        'refresh': '30/min',
+        'register': '10/hour',
+    },
 }
 
 SPECTACULAR_SETTINGS = {
@@ -191,8 +205,16 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,  # TODO: enable once reuse detection lands
+    # Reuse detection (apps/users/models.py: RefreshTokenFamily/Record) now
+    # rejects a rotated-out token before simplejwt's own blacklist is even
+    # consulted, so this is safe to enable as a defense-in-depth check.
+    'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    # Dedicated signing key, separate from Django's SECRET_KEY (ADR 003:
+    # rotating SECRET_KEY for unrelated reasons must not invalidate every
+    # live JWT, and compromising one must not compromise the other).
+    'SIGNING_KEY': env('JWT_SIGNING_KEY'),
+    'ALGORITHM': 'HS256',  # pinned per RFC 8725 §3.1, never left implicit
 }
 
 AUTH_COOKIE_ACCESS_NAME = 'access_token'
@@ -200,3 +222,19 @@ AUTH_COOKIE_REFRESH_NAME = 'refresh_token'
 AUTH_COOKIE_SECURE = not DEBUG
 AUTH_COOKIE_HTTPONLY = True
 AUTH_COOKIE_SAMESITE = 'Lax'
+# The refresh cookie is only ever needed on the auth endpoints that consume
+# it (refresh, logout) — scoping its path shrinks the surface that could
+# leak this long-lived, high-value token (ADR 003).
+AUTH_COOKIE_REFRESH_PATH = '/api/v1/auth/'
+
+# Readable-by-JS double-submit CSRF cookie, paired with an X-CSRF-Token
+# header on cookie-authenticated state-changing requests (ADR 003 CSRF
+# defense-in-depth; see apps/users/permissions.py::CookieCSRFPermission).
+AUTH_CSRF_COOKIE_NAME = 'csrf_token'
+
+# apps/users/management/commands/cleanup_expired_tokens.py — prunes expired
+# RefreshTokenRecord/Family rows (ADR 003). Requires `manage.py crontab add`
+# to be run once per deployment to register this with system cron.
+CRONJOBS = [
+    ('0 * * * *', 'django.core.management.call_command', ['cleanup_expired_tokens']),
+]

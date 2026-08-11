@@ -44,7 +44,23 @@ docker compose exec app python manage.py migrate
 docker compose exec app python manage.py check
 ```
 
-### 5. API docs (Swagger)
+**Future improvement**: the `app` image doesn't currently install the
+system `cron` package or run `crontab add`, so `django-crontab`'s
+`CRONJOBS` setting is inert — `cleanup_expired_tokens` must be run
+manually (above) until this is wired up. Add a separate `cron` service in
+`docker-compose.yml` (same image, `command` running `crontab add && cron -f`
+instead of `runserver`, with `cron` installed via `apt-get` in the
+Dockerfile for that service) rather than bolting cron onto the `app`
+container — avoids duplicate cleanup runs if `app` is ever scaled to
+multiple replicas.
+
+### 5. Tests
+
+```bash
+docker compose run --rm app python manage.py test
+```
+
+### 6. API docs (Swagger)
 
 With the app running, open the Swagger UI in your browser:
 
