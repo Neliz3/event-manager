@@ -69,3 +69,17 @@ With the app running, open the Swagger UI in your browser:
 - `/api/docs/` — Swagger UI (interactive, "Try it out" buttons to actually call endpoints)
 - `/api/redoc/` — ReDoc (read-only, nicer for browsing)
 - `/api/schema/` — raw OpenAPI 3 YAML schema, auto-generated from your serializers/views
+
+Auth is cookie-based (`access_token` / `refresh_token` are set as HttpOnly
+cookies on login), so once you're logged in Swagger UI just works — no need
+to paste a token into the "Authorize" button.
+
+**Troubleshooting: Swagger UI shows no endpoints, just "401 Unauthorized"**
+
+This means a stale/expired `access_token` cookie from a previous session is
+being sent with the request for the schema itself, which fails
+authentication before permissions are even checked. Fix:
+
+1. Open DevTools → Application/Storage → Cookies → `http://127.0.0.1:8000`.
+2. Delete `access_token` and `refresh_token` cookies.
+3. Reload `http://127.0.0.1:8000/api/docs/`.

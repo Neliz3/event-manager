@@ -13,17 +13,21 @@ class MyParticipationSerializer(serializers.ModelSerializer):
 
 
 class _MyParticipationMixin(serializers.Serializer):
-    """Adds `my_participation` per ADR 002: null when authenticated with no
-    record, omitted entirely for anonymous users.
-
-    TODO: this currently always returns None — wiring it to the requesting
-    user's actual EventParticipant record is left for the business-logic pass.
+    """Adds `my_participation` per ADR 002: the requesting user's own
+    EventParticipant status, null when authenticated with no record,
+    omitted entirely for anonymous users.
     """
 
     my_participation = serializers.SerializerMethodField()
 
     def get_my_participation(self, obj):
-        return None
+        request = self.context.get("request")
+        if request is None or not request.user or not request.user.is_authenticated:
+            return None
+        participant = obj.participants.filter(user=request.user).first()
+        if participant is None:
+            return None
+        return MyParticipationSerializer(participant).data
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
