@@ -41,13 +41,17 @@ AUTH_USER_MODEL = 'users.User'
 INSTALLED_APPS = [
     'apps.users',
     'apps.events',
-    
+
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'drf_spectacular',
 ]
 
 MIDDLEWARE = [
@@ -140,3 +144,59 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+
+# Django REST Framework
+# https://www.django-rest-framework.org/api-guide/settings/
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'apps.users.authentication.CookieJWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticatedOrReadOnly',
+    ),
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    # TODO: point this at a custom handler that renders the ADR-002
+    # {"error": {"code", "message"}} shape for domain/business exceptions,
+    # while leaving DRF's default field-error shape for validation errors.
+    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Event Manager API',
+    'DESCRIPTION': 'API per ADR 002 (docs/adr/002-api-layer.md).',
+    'VERSION': 'v1',
+    'SERVE_INCLUDE_SCHEMA': False,
+    # Strip the version prefix before auto-deriving tags, so Swagger groups
+    # endpoints by logical part (auth / users / events) instead of by
+    # everything falling under one "v1" bucket.
+    'SCHEMA_PATH_PREFIX': r'/api/v1',
+}
+
+# django-rest-framework-simplejwt
+# https://django-rest-framework-simplejwt.readthedocs.io/en/latest/settings.html
+#
+# Tokens are issued as usual but delivered to the client via HttpOnly cookies
+# (see apps/users/authentication.py and apps/users/views.py) rather than in
+# the response body. Refresh-token rotation is enabled; reuse detection /
+# token-family revocation is business logic left as a TODO (needs a
+# supporting model that does not exist yet).
+
+from datetime import timedelta  # noqa: E402
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': False,  # TODO: enable once reuse detection lands
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+AUTH_COOKIE_ACCESS_NAME = 'access_token'
+AUTH_COOKIE_REFRESH_NAME = 'refresh_token'
+AUTH_COOKIE_SECURE = not DEBUG
+AUTH_COOKIE_HTTPONLY = True
+AUTH_COOKIE_SAMESITE = 'Lax'

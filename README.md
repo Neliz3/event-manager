@@ -29,6 +29,7 @@ docker compose logs -f app   # logs
 docker compose down          # stop
 ```
 
+
 ### 3. Create superuser
 
 ```bash
@@ -42,3 +43,13 @@ docker compose exec app python manage.py makemigrations users events
 docker compose exec app python manage.py migrate
 docker compose exec app python manage.py check
 ```
+
+### 5. API docs (Swagger)
+
+With the app running, open the Swagger UI in your browser:
+
+`http://127.0.0.1:8000/api/docs/`
+
+- `/api/docs/` — Swagger UI (interactive, "Try it out" buttons to actually call endpoints)
+- `/api/redoc/` — ReDoc (read-only, nicer for browsing)
+- `/api/schema/` — raw OpenAPI 3 YAML schema, auto-generated from your serializers/views
