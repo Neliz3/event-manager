@@ -179,3 +179,9 @@ Ref: events.organizer_id > users.id [delete: restrict]
 Ref: event_participants.event_id > events.id [delete: cascade]
 Ref: event_participants.user_id > users.id [delete: cascade]
 ```
+
+## Future improvements
+
+- **Monitoring/logging system** — structured logging and error tracking (e.g. Sentry), plus metrics/dashboards for request latency, queue depth, and email delivery failures.
+- **Organizer teams** — allow an event to be owned by a team of organizers instead of a single user, with shared permissions to edit/manage the event and its participants.
+- **Frontend** — a web client for the API (event browsing/search, registration flows, organizer dashboard), currently API-only with Swagger/Redoc for exploration.

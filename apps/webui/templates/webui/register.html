@@ -1,0 +1,40 @@
+{% extends 'webui/base.html' %}
+{% load static %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col s12 m8 offset-m2 l6 offset-l3">
+    <h4>Create an account</h4>
+
+    <div id="register-form-wrap">
+      <form id="register-form">
+        <div class="input-field">
+          <input id="email" name="email" type="email" required>
+          <label for="email">Email</label>
+        </div>
+        <div class="input-field">
+          <input id="username" name="username" type="text" required>
+          <label for="username">Username</label>
+        </div>
+        <div class="input-field">
+          <input id="password" name="password" type="password" required>
+          <label for="password">Password</label>
+        </div>
+        <button class="btn waves-effect waves-light" type="submit">
+          Register <i class="material-icons right">send</i>
+        </button>
+      </form>
+    </div>
+
+    <div id="register-success" class="hide">
+      <p>
+        Check your inbox for a verification link before you
+        <a href="{% url 'webui-login' %}">log in</a>.
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="{% static 'webui/js/register.js' %}"></script>
+{% endblock %}

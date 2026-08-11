@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'apps.users',
     'apps.events',
     'apps.notifications',
+    'apps.webui',
 
     'django.contrib.admin',
     'django.contrib.auth',
@@ -198,7 +199,7 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Event Manager API',
-    'DESCRIPTION': 'API per ADR 002 (docs/adr/002-api-layer.md).',
+    'DESCRIPTION': 'API per ADRs.',
     'VERSION': 'v1',
     'SERVE_INCLUDE_SCHEMA': False,
     # Strip the version prefix before auto-deriving tags, so Swagger groups
