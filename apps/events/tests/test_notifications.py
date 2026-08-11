@@ -58,7 +58,7 @@ class InvitationNotificationTests(APITestCase):
 
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
-                reverse("event-invite", args=[event.id]), {"username": invitee.username}
+                reverse("event-invite", args=[event.id]), {"email": invitee.email}
             )
 
         self.assertEqual(response.status_code, 201)

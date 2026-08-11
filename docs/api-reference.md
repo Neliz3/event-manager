@@ -190,7 +190,7 @@ Auth required. Self-registers the requester as a participant (status
 ### `POST /api/v1/events/{id}/invite/`
 
 Auth required (organizer, per business rule — `PermissionError` → **403**
-otherwise). Body: `{ username }`.
+otherwise). Body: `{ email }`.
 
 - **201** → participant representation, status `invited`.
 - **403** — requester isn't allowed to invite.

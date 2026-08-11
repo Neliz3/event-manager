@@ -164,7 +164,7 @@ class EventParticipantPublicSerializer(serializers.ModelSerializer):
 
 
 class InviteSerializer(serializers.Serializer):
-    username = serializers.CharField()
+    email = serializers.EmailField()
 
 
 class RegisterActionSerializer(serializers.Serializer):

@@ -93,21 +93,21 @@ class EventInviteViewTests(APITestCase):
         )
         self.event = make_event(self.organizer, access_type=Event.AccessType.PRIVATE)
 
-    def invite(self, actor, username):
+    def invite(self, actor, email):
         self.client.force_authenticate(actor)
         return self.client.post(
-            reverse("event-invite", args=[self.event.id]), {"username": username}
+            reverse("event-invite", args=[self.event.id]), {"email": email}
         )
 
     def test_organizer_invite_success_creates_invited_participant(self):
-        response = self.invite(self.organizer, self.invitee.username)
+        response = self.invite(self.organizer, self.invitee.email)
 
         self.assertEqual(response.status_code, 201)
         participant = EventParticipant.objects.get(event=self.event, user=self.invitee)
         self.assertEqual(participant.status, EventParticipant.Status.INVITED)
 
     def test_non_organizer_cannot_invite(self):
-        response = self.invite(self.other, self.invitee.username)
+        response = self.invite(self.other, self.invitee.email)
 
         self.assertEqual(response.status_code, 403)
         self.assertFalse(
@@ -115,9 +115,9 @@ class EventInviteViewTests(APITestCase):
         )
 
     def test_duplicate_invite_returns_409(self):
-        self.invite(self.organizer, self.invitee.username)
+        self.invite(self.organizer, self.invitee.email)
 
-        response = self.invite(self.organizer, self.invitee.username)
+        response = self.invite(self.organizer, self.invitee.email)
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["error"]["code"], "already_invited")

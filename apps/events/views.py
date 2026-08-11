@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.db.models import Q
+from django.urls import reverse
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -205,9 +206,15 @@ class EventInviteView(APIView):
         serializer.is_valid(raise_exception=True)
 
         event = generics.get_object_or_404(Event, pk=event_id)
-        invitee = generics.get_object_or_404(
-            get_user_model(), username=serializer.validated_data["username"]
-        )
+        invitee = get_user_model().objects.filter(
+            email__iexact=serializer.validated_data["email"]
+        ).first()
+        if invitee is None:
+            return _domain_error(
+                "user_not_found",
+                "No account with that email — ask them to sign up first.",
+                status.HTTP_404_NOT_FOUND,
+            )
 
         try:
             participant = event.invite(invitee, by=request.user)
@@ -220,7 +227,10 @@ class EventInviteView(APIView):
                 status.HTTP_409_CONFLICT,
             )
 
-        send_on_commit(send_invitation_received, participant)
+        event_link = request.build_absolute_uri(
+            reverse("webui-event-detail", args=[event.id])
+        )
+        send_on_commit(send_invitation_received, participant, event_link=event_link)
 
         data = EventParticipantFullSerializer(participant).data
         return Response(data, status=status.HTTP_201_CREATED)

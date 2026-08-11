@@ -58,8 +58,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <h6>Invite a participant</h6>
         <form id="invite-form" class="row">
           <div class="input-field col s8">
-            <input id="invite-username" type="text" required>
-            <label for="invite-username">Username</label>
+            <input id="invite-email" type="email" required>
+            <label for="invite-email">Email</label>
           </div>
           <button class="btn waves-effect waves-light col s3" type="submit">Invite</button>
         </form>
@@ -160,16 +160,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (inviteForm) {
       inviteForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const username = document.getElementById('invite-username').value;
+        const email = document.getElementById('invite-email').value;
         const { ok, body } = await apiFetch(`/api/v1/events/${eventId}/invite/`, {
           method: 'POST',
-          body: JSON.stringify({ username }),
+          body: JSON.stringify({ email }),
         });
         if (!ok) {
           toast(errorMessage(body, 'Could not send invitation.'), 'red darken-1');
           return;
         }
-        toast(`Invited ${username}.`);
+        toast(`Invited ${email}.`);
         inviteForm.reset();
       });
     }
