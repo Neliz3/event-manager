@@ -16,6 +16,8 @@ class CSRFPermissionTests(TestCase):
         self.user = User.objects.create_user(
             email="csrf@example.com", username="csrf", password="s3cure-pass-word!"
         )
+        self.user.is_email_verified = True
+        self.user.save(update_fields=["is_email_verified"])
 
     def test_cookie_authenticated_post_without_csrf_header_is_blocked(self):
         access = RefreshToken.for_user(self.user).access_token

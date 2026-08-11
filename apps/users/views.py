@@ -2,6 +2,9 @@ import secrets
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.shortcuts import render
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import AuthenticationFailed
@@ -10,7 +13,18 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import RefreshTokenFamily, RefreshTokenRecord
+from apps.notifications.emails import (
+    send_email_verification,
+    send_on_commit,
+    send_password_reset,
+)
+
+from .models import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    RefreshTokenFamily,
+    RefreshTokenRecord,
+)
 from .permissions import CookieCSRFPermission
 from .serializers import (
     EmailVerificationConfirmSerializer,
@@ -25,6 +39,8 @@ from .serializers import (
     UserSerializer,
 )
 from .throttles import (
+    EmailVerificationEmailThrottle,
+    EmailVerificationIPThrottle,
     LoginEmailThrottle,
     LoginIPThrottle,
     PasswordResetEmailThrottle,
@@ -32,9 +48,62 @@ from .throttles import (
     RefreshIPThrottle,
     RegisterIPThrottle,
 )
-from .tokens import hash_jti
+from .tokens import generate_raw_token, hash_jti, hash_token
 
 User = get_user_model()
+
+
+def _confirm_email_verification_token(raw_token):
+    """Shared by the JSON confirm endpoint and the emailed GET link.
+
+    Returns the verified User on success, None on invalid/expired/used
+    token. Marks the token used and invalidates the user's other
+    outstanding tokens.
+    """
+    token = (
+        EmailVerificationToken.objects.select_related("user")
+        .filter(token_hash=hash_token(raw_token))
+        .first()
+    )
+    if token is None or not token.is_valid():
+        return None
+
+    now = timezone.now()
+    token.used_at = now
+    token.save(update_fields=["used_at"])
+
+    user = token.user
+    user.is_email_verified = True
+    user.save(update_fields=["is_email_verified"])
+
+    EmailVerificationToken.objects.filter(user=user, used_at__isnull=True).update(
+        used_at=now
+    )
+
+    return user
+
+
+def _lookup_password_reset_token(raw_token):
+    """Look up and validate (but don't consume) a password-reset token —
+    shared by the GET form render and the POST that actually sets the
+    password."""
+    token = (
+        PasswordResetToken.objects.select_related("user")
+        .filter(token_hash=hash_token(raw_token))
+        .first()
+    )
+    if token is None or not token.is_valid():
+        return None
+    return token
+
+
+def _consume_password_reset_token(token, new_password):
+    user = token.user
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+    token.used_at = timezone.now()
+    token.save(update_fields=["used_at"])
+    return user
 
 
 def _set_auth_cookies(response, access, refresh):
@@ -245,16 +314,74 @@ class _NotImplementedAuthView(APIView):
         return Response(status=status.HTTP_501_NOT_IMPLEMENTED)
 
 
-class EmailVerificationRequestView(_NotImplementedAuthView):
+class EmailVerificationRequestView(APIView):
     """POST /api/v1/auth/email-verification/request/"""
 
+    permission_classes = [permissions.AllowAny]
     serializer_class = EmailVerificationRequestSerializer
+    throttle_classes = [EmailVerificationEmailThrottle, EmailVerificationIPThrottle]
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = User.objects.filter(
+            email__iexact=serializer.validated_data["email"]
+        ).first()
+        if user is not None:
+            raw_token = generate_raw_token()
+            EmailVerificationToken.objects.create(
+                user=user, token_hash=hash_token(raw_token)
+            )
+            link = request.build_absolute_uri(
+                f"/auth/email-verification/confirm/?token={raw_token}"
+            )
+            send_on_commit(send_email_verification, user, link)
+
+        # Same 200 whether or not the email is registered — don't leak
+        # account existence.
+        return Response(status=status.HTTP_200_OK)
 
 
-class EmailVerificationConfirmView(_NotImplementedAuthView):
+class EmailVerificationConfirmView(APIView):
     """POST /api/v1/auth/email-verification/confirm/"""
 
+    permission_classes = [permissions.AllowAny]
     serializer_class = EmailVerificationConfirmSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = _confirm_email_verification_token(serializer.validated_data["token"])
+        if user is None:
+            return Response(
+                {
+                    "error": {
+                        "code": "invalid_token",
+                        "message": "This verification link is invalid, expired, or already used.",
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(status=status.HTTP_200_OK)
+
+
+class EmailVerificationConfirmPageView(APIView):
+    """GET /auth/email-verification/confirm/?token=...
+
+    Server-rendered template for the link inside the email — not part of
+    the versioned JSON API (§2 deviation note).
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        raw_token = request.query_params.get("token", "")
+        user = _confirm_email_verification_token(raw_token) if raw_token else None
+        template = "users/email_verification_success.html" if user else "users/email_verification_error.html"
+        return render(request, template, status=200)
 
 
 class PasswordChangeView(_NotImplementedAuthView):
@@ -264,17 +391,113 @@ class PasswordChangeView(_NotImplementedAuthView):
     serializer_class = PasswordChangeSerializer
 
 
-class PasswordResetRequestView(_NotImplementedAuthView):
+class PasswordResetRequestView(APIView):
     """POST /api/v1/auth/password/reset/request/"""
 
+    permission_classes = [permissions.AllowAny]
     serializer_class = PasswordResetRequestSerializer
     throttle_classes = [PasswordResetEmailThrottle, PasswordResetIPThrottle]
 
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-class PasswordResetConfirmView(_NotImplementedAuthView):
+        user = User.objects.filter(
+            email__iexact=serializer.validated_data["email"]
+        ).first()
+        if user is not None:
+            raw_token = generate_raw_token()
+            PasswordResetToken.objects.create(
+                user=user, token_hash=hash_token(raw_token)
+            )
+            link = request.build_absolute_uri(
+                f"/auth/password-reset/confirm/?token={raw_token}"
+            )
+            send_on_commit(send_password_reset, user, link)
+
+        # Same 200 whether or not the email is registered — don't leak
+        # account existence.
+        return Response(status=status.HTTP_200_OK)
+
+
+class PasswordResetConfirmView(APIView):
     """POST /api/v1/auth/password/reset/confirm/"""
 
+    permission_classes = [permissions.AllowAny]
     serializer_class = PasswordResetConfirmSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        token = _lookup_password_reset_token(serializer.validated_data["token"])
+        if token is None:
+            return Response(
+                {
+                    "error": {
+                        "code": "invalid_token",
+                        "message": "This reset link is invalid, expired, or already used.",
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        _consume_password_reset_token(token, serializer.validated_data["new_password"])
+        return Response(status=status.HTTP_200_OK)
+
+
+class PasswordResetConfirmPageView(APIView):
+    """GET/POST /auth/password-reset/confirm/?token=...
+
+    Server-rendered form for the link inside the email — not part of the
+    versioned JSON API (§3 "Reset confirm page" note). Unlike email
+    verification this needs a form: the user submits a new password, not
+    just proof of token possession.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        raw_token = request.query_params.get("token", "")
+        token = _lookup_password_reset_token(raw_token) if raw_token else None
+        if token is None:
+            return render(request, "users/password_reset_error.html", status=200)
+        return render(
+            request,
+            "users/password_reset_form.html",
+            {"token": raw_token},
+            status=200,
+        )
+
+    def post(self, request):
+        raw_token = request.data.get("token", "")
+        token = _lookup_password_reset_token(raw_token) if raw_token else None
+        if token is None:
+            return render(request, "users/password_reset_error.html", status=200)
+
+        new_password = request.data.get("new_password", "")
+        confirm_password = request.data.get("confirm_password", "")
+
+        if new_password != confirm_password:
+            return render(
+                request,
+                "users/password_reset_form.html",
+                {"token": raw_token, "error": "Passwords do not match."},
+                status=200,
+            )
+
+        try:
+            validate_password(new_password)
+        except DjangoValidationError as exc:
+            return render(
+                request,
+                "users/password_reset_form.html",
+                {"token": raw_token, "error": " ".join(exc.messages)},
+                status=200,
+            )
+
+        _consume_password_reset_token(token, new_password)
+        return render(request, "users/password_reset_success.html", status=200)
 
 
 class MeView(generics.RetrieveUpdateAPIView):

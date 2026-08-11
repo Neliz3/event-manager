@@ -22,10 +22,28 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from apps.users.views import (
+    EmailVerificationConfirmPageView,
+    PasswordResetConfirmPageView,
+)
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include('apps.users.urls')),
     path('api/v1/events/', include('apps.events.urls')),
+
+    # Server-rendered link targets (not versioned JSON API) — §2/§3 of
+    # docs/email-integration-spec.md.
+    path(
+        'auth/email-verification/confirm/',
+        EmailVerificationConfirmPageView.as_view(),
+        name='auth-email-verification-confirm-page',
+    ),
+    path(
+        'auth/password-reset/confirm/',
+        PasswordResetConfirmPageView.as_view(),
+        name='auth-password-reset-confirm-page',
+    ),
 
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(

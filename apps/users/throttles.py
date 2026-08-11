@@ -43,9 +43,17 @@ class RegisterIPThrottle(LoginIPThrottle):
     scope = "register"
 
 
+class EmailVerificationIPThrottle(LoginIPThrottle):
+    scope = "email-verification-ip"
+
+
 class LoginEmailThrottle(PerEmailThrottle):
     scope = "login"
 
 
 class PasswordResetEmailThrottle(PerEmailThrottle):
     scope = "password-reset"
+
+
+class EmailVerificationEmailThrottle(PerEmailThrottle):
+    scope = "email-verification"

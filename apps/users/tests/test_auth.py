@@ -18,6 +18,8 @@ class AuthFlowTests(TestCase):
         self.user = User.objects.create_user(
             email="a@example.com", username="a", password=self.password
         )
+        self.user.is_email_verified = True
+        self.user.save(update_fields=["is_email_verified"])
 
     def login(self):
         return self.client.post(
