@@ -28,3 +28,17 @@ App: `http://localhost:8000`
 docker compose logs -f app   # logs
 docker compose down          # stop
 ```
+
+### 3. Create superuser
+
+```bash
+docker compose exec app uv run python manage.py createsuperuser
+```
+
+### 4. Model changes / migrations
+
+```bash
+docker compose exec app python manage.py makemigrations users events
+docker compose exec app python manage.py migrate
+docker compose exec app python manage.py check
+```
