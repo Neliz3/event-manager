@@ -1,0 +1,22 @@
+# Environment variables
+.env
+.env.*
+
+# Secrets
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Cloud credentials
+.aws/
+.azure/
+.gcp/
+
+# Infrastructure
+terraform.tfstate
+terraform.tfstate.*
+
+# Local overrides
+*.local
