@@ -4,6 +4,16 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.notifications.emails import (
+    send_invitation_accepted,
+    send_invitation_received,
+    send_invitation_rejected,
+    send_on_commit,
+    send_participation_cancelled,
+    send_reconfirmation_required,
+    send_registration_confirmed,
+)
+
 from .models import Event, EventParticipant
 from .permissions import CanViewParticipants, IsOrganizerOrReadOnly
 from .serializers import (
@@ -92,14 +102,45 @@ class EventDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_serializer_context(self):
         return {**super().get_serializer_context(), "request": self.request}
 
+    # Fields whose change reopens confirmation for already-CONFIRMED
+    # participants (§6/§3 of docs/email-integration-spec.md — matches the
+    # reconfirmation email copy verbatim: "changed the {date|format|location}").
+    RECONFIRMATION_TRIGGER_FIELDS = ("date", "format", "location")
+
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
+        before = {
+            field: getattr(instance, field) for field in self.RECONFIRMATION_TRIGGER_FIELDS
+        }
+
         write_serializer = self.get_serializer(instance, data=request.data, partial=partial)
         write_serializer.is_valid(raise_exception=True)
         event = write_serializer.save()
+
+        self._notify_reconfirmation_required(event, before)
+
         read_serializer = EventDetailSerializer(event, context=self.get_serializer_context())
         return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    def _notify_reconfirmation_required(self, event, before):
+        changed_fields = [
+            field
+            for field in self.RECONFIRMATION_TRIGGER_FIELDS
+            if getattr(event, field) != before[field]
+        ]
+        if not changed_fields:
+            return
+
+        for participant in event.participants.filter(
+            status=EventParticipant.Status.CONFIRMED
+        ):
+            participant.mark_reconfirmation_required()
+            send_on_commit(
+                send_reconfirmation_required,
+                participant,
+                changed_fields=" and ".join(changed_fields),
+            )
 
 
 def _domain_error(code, message, http_status):
@@ -143,6 +184,8 @@ class EventRegisterView(APIView):
         except ValueError as exc:
             return _domain_error("invalid_request", str(exc), status.HTTP_400_BAD_REQUEST)
 
+        send_on_commit(send_registration_confirmed, participant)
+
         data = EventParticipantFullSerializer(participant).data
         return Response(data, status=status.HTTP_201_CREATED)
 
@@ -173,6 +216,8 @@ class EventInviteView(APIView):
                 status.HTTP_409_CONFLICT,
             )
 
+        send_on_commit(send_invitation_received, participant)
+
         data = EventParticipantFullSerializer(participant).data
         return Response(data, status=status.HTTP_201_CREATED)
 
@@ -192,6 +237,9 @@ class _ParticipantTransitionView(APIView):
     valid_source_statuses = ()
 
     def transition(self, participant):
+        raise NotImplementedError
+
+    def notify(self, participant):
         raise NotImplementedError
 
     def post(self, request, event_id):
@@ -217,6 +265,8 @@ class _ParticipantTransitionView(APIView):
         except ValueError as exc:
             return _domain_error("invalid_request", str(exc), status.HTTP_400_BAD_REQUEST)
 
+        self.notify(participant)
+
         data = EventParticipantFullSerializer(participant).data
         return Response(data, status=status.HTTP_200_OK)
 
@@ -230,6 +280,9 @@ class EventAcceptView(_ParticipantTransitionView):
     def transition(self, participant):
         participant.accept()
 
+    def notify(self, participant):
+        send_on_commit(send_invitation_accepted, participant)
+
 
 class EventRejectView(_ParticipantTransitionView):
     """POST /api/v1/events/{event_id}/reject/"""
@@ -240,6 +293,9 @@ class EventRejectView(_ParticipantTransitionView):
     def transition(self, participant):
         participant.reject()
 
+    def notify(self, participant):
+        send_on_commit(send_invitation_rejected, participant)
+
 
 class EventCancelView(_ParticipantTransitionView):
     """POST /api/v1/events/{event_id}/cancel/"""
@@ -249,6 +305,9 @@ class EventCancelView(_ParticipantTransitionView):
 
     def transition(self, participant):
         participant.cancel()
+
+    def notify(self, participant):
+        send_on_commit(send_participation_cancelled, participant)
 
 
 class EventParticipantsListView(generics.ListAPIView):

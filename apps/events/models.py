@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -203,6 +204,11 @@ class EventParticipant(models.Model):
 
     status = models.CharField(max_length=24, choices=Status.choices)
 
+    # Set when entering RECONFIRMATION_REQUIRED (§6); cleared on leaving it
+    # (accept()/cancel()). expire_reconfirmations() releases any row whose
+    # deadline has passed.
+    reconfirmation_deadline = models.DateTimeField(null=True, blank=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -260,8 +266,12 @@ class EventParticipant(models.Model):
                     raise self.EventFull("event is at capacity.")
 
             participant.status = self.Status.CONFIRMED
-            participant.save(update_fields=["status", "updated_at"])
+            participant.reconfirmation_deadline = None
+            participant.save(
+                update_fields=["status", "reconfirmation_deadline", "updated_at"]
+            )
             self.status = participant.status
+            self.reconfirmation_deadline = participant.reconfirmation_deadline
             return participant
 
     def reject(self):
@@ -282,7 +292,8 @@ class EventParticipant(models.Model):
             raise ValueError(f"cannot cancel() from status {self.status!r}.")
 
         self.status = self.Status.CANCELLED
-        self.save(update_fields=["status", "updated_at"])
+        self.reconfirmation_deadline = None
+        self.save(update_fields=["status", "reconfirmation_deadline", "updated_at"])
         return self
 
     def mark_reconfirmation_required(self):
@@ -290,12 +301,56 @@ class EventParticipant(models.Model):
 
         Triggered when the organizer changes date/format/location on the
         event. CANCELLED stays terminal and is not affected. The slot stays
-        reserved (decision #12); the TTL/expiration mechanism itself is not
-        implemented here (left as an implementation TODO per the ADR).
+        reserved (decision #12) until expire_reconfirmations() releases it
+        after the 24h deadline set here (§6).
         """
         if self.status != self.Status.CONFIRMED:
             return self
 
+        self.reconfirmation_deadline = timezone.now() + timedelta(hours=24)
         self.status = self.Status.RECONFIRMATION_REQUIRED
-        self.save(update_fields=["status", "updated_at"])
+        self.save(update_fields=["status", "reconfirmation_deadline", "updated_at"])
         return self
+
+
+def expire_reconfirmations():
+    """§6: release RECONFIRMATION_REQUIRED holds whose 24h deadline has
+    passed — CANCELLED (matching the manual cancel() path, decision #12's
+    capacity hold is freed the same way), plus a "reservation expired"
+    email per released participant. Scheduled via CRONJOBS (§5's cron
+    mechanism, no separate scheduler) — see the expire_reconfirmations
+    management command.
+
+    Returns the number of participants released.
+    """
+    from apps.notifications.emails import send_on_commit, send_reservation_expired
+
+    expired_ids = list(
+        EventParticipant.objects.filter(
+            status=EventParticipant.Status.RECONFIRMATION_REQUIRED,
+            reconfirmation_deadline__lte=timezone.now(),
+        ).values_list("id", flat=True)
+    )
+
+    count = 0
+    for participant_id in expired_ids:
+        with transaction.atomic():
+            participant = EventParticipant.objects.select_for_update().get(
+                pk=participant_id
+            )
+            if (
+                participant.status != EventParticipant.Status.RECONFIRMATION_REQUIRED
+                or participant.reconfirmation_deadline is None
+                or participant.reconfirmation_deadline > timezone.now()
+            ):
+                continue
+
+            participant.status = EventParticipant.Status.CANCELLED
+            participant.reconfirmation_deadline = None
+            participant.save(
+                update_fields=["status", "reconfirmation_deadline", "updated_at"]
+            )
+            send_on_commit(send_reservation_expired, participant)
+            count += 1
+
+    return count
