@@ -1,0 +1,9 @@
+Hi {{ username }},
+
+The organizer changed the {{ changed_fields }} for {{ event.title }}.
+Your confirmed spot now needs reconfirmation:
+
+{{ event_link }}
+
+Please reconfirm or cancel within 24 hours, or your reservation may be
+released to other participants.

@@ -1,0 +1,4 @@
+Hi {{ username }},
+
+You've declined the invitation to {{ event.title }}. If this was a
+mistake, contact the organizer to be invited again.

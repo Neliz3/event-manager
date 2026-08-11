@@ -1,0 +1,6 @@
+Hi {{ username }},
+
+You've cancelled your participation in {{ event.title }} on {{ event.date }}.
+{% if event.access_type == "public" %}You can register again any time before
+the event.{% else %}You'll need a new invitation from the organizer to
+join again.{% endif %}

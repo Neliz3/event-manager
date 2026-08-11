@@ -1,0 +1,9 @@
+Hi {{ username }},
+
+Your spot for {{ event.title }} on {{ event.date }} needed reconfirmation
+and the 24-hour window has passed, so your reservation has been
+released.
+
+{% if event.access_type == "public" %}You can register again if space is
+still available.{% else %}You'll need a new invitation from the organizer
+to join again.{% endif %}

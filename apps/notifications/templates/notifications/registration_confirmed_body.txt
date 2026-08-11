@@ -1,0 +1,7 @@
+Hi {{ username }},
+
+You're confirmed for {{ event.title }} on {{ event.date }}.
+{% if event.format == "offline" %}Location: {{ event.location }}{% else %}This is an
+online event.{% endif %}
+
+See you there!

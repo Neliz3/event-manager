@@ -1,0 +1,7 @@
+Hi {{ username }},
+
+{{ organizer_username }} has invited you to {{ event.title }} on {{ event.date }}.
+
+Accept or decline: {{ event_link }}
+
+If you don't respond, your invitation stays pending.

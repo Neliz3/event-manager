@@ -1,0 +1,1 @@
+You declined {{ event.title }}

@@ -1,0 +1,1 @@
+Your reservation for {{ event.title }} has expired
