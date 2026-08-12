@@ -1,19 +1,28 @@
-# Email Integration Spec (Gap Analysis)
+# Email Integration Spec
 
-This document records what ADR 002 (API Layer) requires for email
-verification and email notifications versus what is actually implemented
-in code today. It is a gap list to drive future work, not a record of
-decisions already made — unlike the ADRs, nothing here is "Accepted" yet.
+This document records how email verification and email notifications
+(required by ADR 002, API Layer) are implemented, and what's left to do
+before a non-dev rollout. Dev/test functionality is done; the one
+remaining task is picking a staging/prod transactional email provider
+(§4).
 
-## 1. Current state summary
+## 1. Status summary
 
-No email backend is configured anywhere in the project (`config/settings.py`
-has no `EMAIL_BACKEND`/`EMAIL_*` settings), and there is no `send_mail`,
-`EmailMessage`, or task-queue (Celery/etc.) usage anywhere under `apps/`.
-Every endpoint that should trigger an email is either a `501` stub or
-silently omits the notification.
+- **Email backend:** configured for dev (Mailpit via SMTP,
+  `config/settings.py:153-165`). Staging/prod provider still to be
+  chosen — see §4's to-do.
+- **Async delivery:** RQ-based task queue configured (`RQ_QUEUES`,
+  `config/settings.py:278-286`, `redis`/`worker` services in
+  `docker-compose.yml`) — see §5.
+- **Email verification:** fully implemented, including the login gate —
+  see §2.
+- **Password reset:** fully implemented — see §3.
+- **Event/participation notifications:** every trigger in §3's table
+  sends email through `apps/notifications/emails.py`.
+- **Reconfirmation TTL expiration job:** implemented and scheduled via
+  `CRONJOBS` — see §6.
 
-## 2. Email verification — gap detail
+## 2. Email verification
 
 ADR 002 requires (see "Email verification" section of `002-api-layer.md`):
 
@@ -26,78 +35,58 @@ ADR 002 requires (see "Email verification" section of `002-api-layer.md`):
 **Implemented:**
 
 - `POST /api/v1/auth/email-verification/request/` and
-  `.../confirm/` are wired in `apps/users/urls.py:12-21`.
-- The login gate exists: `LoginView.post`
-  (`apps/users/views.py:127-141`) returns `403 email_not_verified` when
-  `user.is_email_verified` is `False`.
+  `.../confirm/` are wired in `apps/users/urls.py:12-21`, backed by
+  `EmailVerificationRequestView`/`EmailVerificationConfirmView`
+  (`apps/users/views.py:317-`, `346-`).
+- `EmailVerificationToken` model (`apps/users/models.py:84`), storing a
+  hashed token with `created_at`/`expires_at`/`used_at`.
+- `User.is_email_verified` defaults to `False`
+  (`apps/users/models.py:16`).
+- The login gate: `LoginView.post` (`apps/users/views.py:127-141`)
+  returns `403 email_not_verified` when `user.is_email_verified` is
+  `False`, blocking unverified users.
+- `EmailVerificationRequestView` generates a token and sends a
+  verification email via `send_on_commit(send_email_verification, ...)`
+  (`apps/users/views.py:330`), throttled by
+  `EmailVerificationEmailThrottle`/`EmailVerificationIPThrottle`
+  (`apps/users/throttles.py`).
+- A separate GET, template-rendering `EmailVerificationConfirmPageView`
+  exists per the ADR-deviation note below, alongside the JSON `POST`
+  confirm endpoint.
 
-**Not implemented:**
-
-- Both verification views subclass `_NotImplementedAuthView`
-  (`apps/users/views.py:220-232`) and return `501 Not Implemented` after
-  only validating the input serializer — no token issuance, no
-  verification, no side effect.
-- No verification-token model exists (`apps/users/models.py` only has
-  `User`, `RefreshTokenFamily`, `RefreshTokenRecord`).
-- `User.is_email_verified` defaults to `True`
-  (`apps/users/models.py:13`), with a TODO comment noting it should
-  default to `False` once verification is real. As a result the login
-  gate above is currently inert — no user is ever actually blocked.
-- No email is ever sent for verification.
-
-**Decided parameters:**
+**Design parameters:**
 
 - Token TTL: **24 hours**.
-- Rate limiting: reuse the existing per-email + per-IP throttle pattern
-  (`PerEmailThrottle`/`LoginIPThrottle` subclasses in
+- Rate limiting: per-email + per-IP throttle pattern
+  (`EmailVerificationEmailThrottle`/`EmailVerificationIPThrottle`,
   `apps/users/throttles.py`, same architecture as
-  `PasswordResetEmailThrottle`/`PasswordResetIPThrottle`) — add
-  `EmailVerificationEmailThrottle`/`EmailVerificationIPThrottle` with
-  their own `DEFAULT_THROTTLE_RATES` scope/rate.
+  `PasswordResetEmailThrottle`/`PasswordResetIPThrottle`).
 - Link target: **server-rendered Django template**, not a separate
   frontend. The link in the email points directly at the Django server
-  (e.g. `GET /api/v1/auth/email-verification/confirm/?token=<raw_token>`
-  or an equivalent non-API-versioned path); the view verifies the token
+  (`GET /api/v1/auth/email-verification/confirm/?token=<raw_token>` or
+  an equivalent non-API-versioned path); the view verifies the token
   and renders a plain template ("Email verified" / "Link expired or
   already used"). No SPA/frontend project exists yet, so this avoids
   building one just to host a confirmation page — CORS/base-URL
   complexity is deferred until a real frontend exists, at which point
   this can be swapped without touching the token/model layer.
 
-**To close the gap:**
-
-1. Add an `EmailVerificationToken` model: FK to `User`, hashed token
-   value, `created_at`, `expires_at` (`created_at + 24h`), `used_at`
-   (nullable).
-2. Flip `User.is_email_verified` default to `False`.
-3. Implement `EmailVerificationRequestView`: generate a cryptographically
-   random token, store its hash, send a verification email containing an
-   HTTPS link with the raw token; throttle via
-   `EmailVerificationEmailThrottle`/`EmailVerificationIPThrottle`.
-4. Implement `EmailVerificationConfirmView` (GET, template-rendering, not
-   JSON): look up by hashed token, check not expired/used, mark
-   `is_email_verified = True`, mark token used, invalidate other
-   outstanding tokens for that user, render result template.
-5. Wire an email backend (see §4).
-
 > **Note — deviates from ADR 002 as written:** ADR 002 lists
 > `email-verification/confirm/` (and `password/reset/confirm/`) as
 > `POST` JSON endpoints returning `200`. The server-rendered-template
 > decision above means the *link the user clicks* hits a `GET`,
-> template-rendering endpoint instead. Recommend keeping the existing
-> `POST .../confirm/` JSON endpoint as-is (for non-browser/API clients
-> and a future frontend to call directly), and adding a **separate**
-> `GET` template-rendering route for the emailed link, which internally
+> template-rendering endpoint instead. The existing `POST .../confirm/`
+> JSON endpoint is kept as-is (for non-browser/API clients and a future
+> frontend to call directly), with a **separate** `GET`
+> template-rendering route for the emailed link, which internally
 > reuses the same confirm logic. ADR 002 should be updated to document
-> this additional route once implemented.
+> this additional route.
 
-## 3. Email notifications — gap detail
+## 3. Email notifications
 
 ADR 002 doesn't fully enumerate notification events, but implies emails
 accompany at least: registration, invitation, and reconfirmation-required
 transitions (event date/format/location changes), plus password reset.
-All of these now send email; the table below is kept as a record of
-trigger → code location, not a "still missing" list.
 
 **By trigger:**
 
@@ -110,11 +99,11 @@ trigger → code location, not a "still missing" list.
 | `cancel` | `apps/events/views.py` (`send_participation_cancelled`) | Sends email |
 | Event change → `RECONFIRMATION_REQUIRED` | `apps/events/views.py` (`send_reconfirmation_required`) | Sends email |
 | Reconfirmation deadline expires | `apps/events/models.py` (`send_reservation_expired`) | Sends email |
-| `POST /auth/password/reset/request/` | `apps/users/views.py` (`PasswordResetRequestView`) | Implemented; sends email |
-| `POST /auth/password/reset/confirm/` | `apps/users/views.py` (`PasswordResetConfirmView`) | Implemented; no email (confirmation is the response itself) |
-| `POST /auth/password/change/` | `apps/users/views.py` (`PasswordChangeView`) | Implemented; no email is sent on this trigger by design |
+| `POST /auth/password/reset/request/` | `apps/users/views.py` (`PasswordResetRequestView`) | Sends email |
+| `POST /auth/password/reset/confirm/` | `apps/users/views.py` (`PasswordResetConfirmView`) | No email (confirmation is the response itself) |
+| `POST /auth/password/change/` | `apps/users/views.py` (`PasswordChangeView`) | No email by design |
 
-**Decided parameters:**
+**Design parameters:**
 
 - Recipient scope: **participant only**. The affected participant is
   emailed for every trigger in the table above (invited, registered,
@@ -126,30 +115,26 @@ trigger → code location, not a "still missing" list.
 - Password reset token TTL: **1 hour** — shorter than the 24h email
   verification TTL, since a reset token is higher-stakes (account
   takeover risk if leaked/intercepted) than a verification token.
-- Password reset rate limiting: reuse
-  `PasswordResetEmailThrottle`/`PasswordResetIPThrottle`
-  (`apps/users/throttles.py:34,50`) as-is — they already exist and just
-  need wiring into the currently-`501`-stub reset views.
+- Password reset rate limiting: `PasswordResetEmailThrottle`/
+  `PasswordResetIPThrottle` (`apps/users/throttles.py`), wired into
+  `PasswordResetRequestView`.
 
-**To close the gap:**
+**Implemented:**
 
-1. Choose and configure an email backend (see §4).
-2. Add a small notification layer (e.g. `apps/notifications/emails.py`)
-   with one function per trigger, called from the model/view layer after
-   the DB state change commits (ideally via `transaction.on_commit` to
-   avoid emailing on a rolled-back transaction). Each function takes the
-   participant (not the organizer) as its recipient.
-3. Implement password reset token model (mirrors
-   `EmailVerificationToken` from §2, but `expires_at = created_at + 1h`)
-   + views, reusing the existing `PasswordResetEmailThrottle`/
-   `PasswordResetIPThrottle`, including the reset email itself.
-4. Decide synchronous vs. async sending — see §5.
+- Notification layer: `apps/notifications/emails.py`, one function per
+  trigger, called via `send_on_commit(...)` (RQ-backed
+  `transaction.on_commit` wrapper) from the model/view layer.
+- Password reset token model: `PasswordResetToken`
+  (`apps/users/models.py:94`, `expires_at = created_at + 1h`) +
+  `PasswordResetRequestView`/`PasswordResetConfirmView`
+  (`apps/users/views.py:424,453`).
+- Delivery is async via RQ — see §5.
 
 **Reset confirm page — differs from verification, needs a form:**
 
 Unlike email verification, the reset link can't be a plain click-to-confirm
 GET, because the user must submit a new password, not just prove token
-possession. Decided: a **server-rendered Django form**, same
+possession. It's a **server-rendered Django form**, same
 no-separate-frontend approach as §2's verification page, extended with an
 HTML form instead of a bare confirmation:
 
@@ -300,14 +285,12 @@ Notes:
 
 ## 4. Email backend
 
-**Decided: Mailpit for dev, SMTP via a transactional provider (SES,
-SendGrid, Postmark, etc. — likely fronted by `django-anymail`) for
-staging/prod.**
+**Dev: done. Staging/prod: open TODO.**
 
-### Dev: Mailpit via docker-compose
+### Dev: Mailpit via docker-compose (done)
 
-Add a `mailpit` service (`axllent/mailpit` image) to `docker-compose.yml`,
-alongside the existing `db`/`app` services:
+`mailpit` service (`axllent/mailpit` image) runs alongside `db`/`app` in
+`docker-compose.yml`:
 
 ```yaml
 mailpit:
@@ -318,31 +301,20 @@ mailpit:
     - "1025:1025"  # SMTP endpoint the app sends to
 ```
 
-`app` should `depends_on: mailpit` and use Django's normal SMTP backend
-pointed at it:
+`app` depends on `mailpit` and uses Django's normal SMTP backend pointed
+at it (`config/settings.py:153-165`). This gives clickable
+verification/reset links in a real inbox UI during manual dev, without
+touching a real provider or the network. Automated tests use Django's
+`locmem` backend (Django's default for `TestCase`) so they can assert on
+`django.core.mail.outbox` without depending on Mailpit being up.
 
-```python
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "mailpit")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 1025))
-EMAIL_USE_TLS = False
-```
-
-This gives clickable verification/reset links in a real inbox UI during
-manual dev, without touching a real provider or the network. Automated
-tests should still use Django's `locmem` backend
-(`django.core.mail.backends.locmem.EmailBackend`, Django's default for
-`TestCase`) so they can assert on `django.core.mail.outbox` without
-depending on Mailpit being up.
-
-### Staging/prod: transactional provider
+### Staging/prod: transactional provider (TODO — blocks non-dev rollout)
 
 - Settings needed: `EMAIL_BACKEND` (or Anymail backend), `EMAIL_HOST`,
   `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_PORT`, `EMAIL_USE_TLS`,
   `DEFAULT_FROM_EMAIL`, plus a provider API key.
-- **Provider choice is still open — explicitly deferred.** Candidates
-  and tradeoffs, for whoever makes this call before staging/prod
-  rollout:
+- **Action item: pick a provider before staging/prod rollout.**
+  Candidates and tradeoffs:
   - **Amazon SES** — cheapest at scale, natural fit if AWS infra is used
     elsewhere.
   - **Postmark** — best deliverability reputation for transactional
@@ -354,45 +326,43 @@ depending on Mailpit being up.
 
 ## 5. Delivery mechanism (sync vs async)
 
-Sending email inline in the request/response cycle blocks the API and
-risks partial failure (DB committed, email failed silently or vice
-versa). Recommend:
+**Implemented: RQ (Redis Queue), not Celery.**
 
-- Introduce a task queue for outbound email, OR
-- At minimum, wrap sends in `transaction.on_commit(...)` and catch/log
-  failures without failing the triggering request.
+`RQ_QUEUES` is configured (`config/settings.py:278-286`), `redis`/`worker`
+services exist in `docker-compose.yml`, and every notification call site
+uses `send_on_commit(...)` (`apps/notifications/emails.py`), which wraps
+`transaction.on_commit(...)` around an RQ `enqueue(..., retry=Retry(max=3,
+interval=[10, 60, 300]))` call, avoiding the risk of emailing on a
+rolled-back transaction or blocking the request/response cycle.
+`CRONJOBS` (`config/settings.py:256-259`) has two entries:
+`cleanup_expired_tokens` and `expire_reconfirmations` (the §6 TTL job,
+enqueuing email via the same RQ path).
 
-No task queue currently exists in the project (`config/settings.py` has
-no Celery/broker config); `CRONJOBS` (`config/settings.py:238-239`) only
-runs `cleanup_expired_tokens` and is unrelated to email sending.
+**Rationale for RQ over Celery:**
 
-**Decided: RQ (Redis Queue), not Celery.** Rationale:
-
-- Current async need is narrow — send-email-after-commit, plus the one
-  future periodic job for §6's TTL expiration. Celery's extra machinery
-  (broker tuning, beat scheduler, Flower monitoring) isn't justified at
-  this scope; RQ's `job.delay()`-style API gets there with far less
-  setup and fewer moving parts to operate.
+- The async need is narrow — send-email-after-commit, plus one periodic
+  job for §6's TTL expiration. Celery's extra machinery (broker tuning,
+  beat scheduler, Flower monitoring) isn't justified at this scope; RQ's
+  `job.delay()`-style API gets there with far less setup and fewer
+  moving parts to operate.
 - Redis is the only new piece of infra either option needs, so the
   choice is really "how much framework on top of Redis," and RQ is the
   lighter one for a project this size.
 - The one thing RQ lacks out of the box is a periodic/cron scheduler —
-  needed for §6. **Decided: use the project's existing `CRONJOBS`
-  mechanism** (`django-crontab`, already used for
-  `cleanup_expired_tokens` per `config/settings.py:238-239`) to enqueue
-  an expiration-check RQ job on a schedule, rather than adding
-  `rq-scheduler`. This avoids introducing a second scheduling system
-  when one is already in place and proven.
+  needed for §6. Uses the project's existing `CRONJOBS` mechanism
+  (`django-crontab`, already used for `cleanup_expired_tokens`) to
+  enqueue an expiration-check RQ job on a schedule, rather than adding
+  `rq-scheduler`. This avoids a second scheduling system alongside one
+  already in place and proven.
 - If the app's async needs grow substantially beyond email + this one
   periodic job (e.g. multi-queue priority, complex retry/routing), it's
   worth revisiting Celery then — but that isn't justified today.
 
-**Worker deployment:** add a `redis` service and a `worker` service to
-`docker-compose.yml`, alongside the existing `db`/`app`/`mailpit`
-services. `worker` uses the same application image as `app`, but runs
-`python manage.py rqworker default` instead of the web server, keeping
-dev/staging/prod symmetric with how `db`/`app` are already run (rather
-than a separately-managed process outside docker-compose).
+**Worker deployment:** `redis` and `worker` services run alongside
+`db`/`app`/`mailpit` in `docker-compose.yml`. `worker` uses the same
+application image as `app`, but runs `python manage.py rqworker default`
+instead of the web server, keeping dev/staging/prod symmetric with how
+`db`/`app` are already run:
 
 ```yaml
 redis:
@@ -413,8 +383,8 @@ worker:
     - .:/app
 ```
 
-`RQ_QUEUES` in `settings.py` should point at the `redis` service
-(`REDIS_URL` env var, defaulting to `redis://redis:6379/0` in compose).
+`RQ_QUEUES` in `settings.py` points at the `redis` service (`REDIS_URL`
+env var, defaulting to `redis://redis:6379/0` in compose).
 
 **Retry/failure policy:**
 
@@ -433,22 +403,45 @@ worker:
   monitoring is introduced more broadly, not as an email-specific
   addition.
 
-## 6. Related but distinct gap: RECONFIRMATION_REQUIRED TTL
+## 6. RECONFIRMATION_REQUIRED TTL expiration job
 
-Not an email gap per se, but adjacent: ADR 001/002 specify a 24-hour
-reservation TTL for `RECONFIRMATION_REQUIRED` capacity holds, with
-expiration releasing the slot. This timer/expiration mechanism is not
-implemented (`apps/events/models.py:293` notes it as a known TODO), and
-there is no scheduled job for it. When implemented, expiration should
-likely also trigger a notification email ("your reservation expired").
+ADR 001/002 specify a 24-hour reservation TTL for
+`RECONFIRMATION_REQUIRED` capacity holds, with expiration releasing the
+slot.
 
-## 7. Suggested implementation order
+**Implemented.** `expire_reconfirmations()`
+(`apps/events/models.py:316-353`) runs the expiration check, releases the
+slot, and calls `send_on_commit(send_reservation_expired, participant)`
+(line 353). It's invoked via the `expire_reconfirmations` management
+command, scheduled every 15 minutes through `CRONJOBS`
+(`config/settings.py:258`). Covered by
+`apps/events/tests/test_notifications.py`.
 
-1. Pick and configure an email backend (§4) — unblocks everything else.
-2. Email verification (§2): token model, request/confirm views, flip
-   `is_email_verified` default.
-3. Password reset (§3): token model, request/confirm views.
-4. Event/participation notification emails (§3): register, invite,
-   accept/reject/cancel, reconfirmation-required.
-5. RECONFIRMATION_REQUIRED TTL expiration job (§6), including its
-   notification email.
+## 7. Functionality checklist
+
+- [x] Email backend for dev (Mailpit)
+- [x] Email verification: token model, request/confirm views, login gate
+- [x] Password reset: token model, request/confirm views/pages
+- [x] Event/participation notification emails: register, invite,
+      accept/reject/cancel, reconfirmation-required
+- [x] Async delivery via RQ, with retry policy
+- [x] RECONFIRMATION_REQUIRED TTL expiration job, including its
+      notification email
+- [ ] **Pick and configure a staging/prod email provider** (§4: SES vs.
+      Postmark vs. SendGrid, via `django-anymail`)
+
+## 8. API endpoints reference
+
+Brief request/response shapes for the email-related endpoints; see
+[api-reference.md](api-reference.md) for the rest of the API and its
+conventions (auth, error shape, CSRF).
+
+| Endpoint | Auth | Body | Response |
+|---|---|---|---|
+| `POST /api/v1/auth/email-verification/request/` | Public | `{ email }` | **200** always (no account-existence leak); queues verification email if the address is registered |
+| `POST /api/v1/auth/email-verification/confirm/` | Public | `{ token }` | **200** verified / **400** `invalid_token` |
+| `GET /auth/email-verification/confirm/?token=...` | Public | — (query param) | HTML page: "Email verified" / "Link expired or already used" — the emailed link's landing target, not under `/api/v1/` |
+| `POST /api/v1/auth/password/reset/request/` | Public | `{ email }` | **200** always (no leak); queues reset email if registered |
+| `POST /api/v1/auth/password/reset/confirm/` | Public | `{ token, new_password }` | **200** password changed / **400** `invalid_token` |
+| `GET/POST /auth/password-reset/confirm/?token=...` | Public | form: new password + confirm | HTML form → "Password changed" — the emailed link's landing target, not under `/api/v1/` |
+| `POST /api/v1/auth/password/change/` | Cookie + CSRF | `{ old_password, new_password }` | **200**, no email sent (see §3) |

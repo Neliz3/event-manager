@@ -43,7 +43,10 @@ Create an account. Public.
 | `password` | string | validated against Django's password validators |
 
 **201** → `{ id, email, username }`. Does not log the user in or send a
-verification email itself — see `email-verification/request/`.
+verification email itself — call `email-verification/request/` for that.
+New accounts start with `is_email_verified = false`, so login is blocked
+until verification completes (see
+[email-integration-spec.md §2](email-integration-spec.md#2-email-verification)).
 
 ### `POST /api/v1/auth/login/`
 
@@ -75,8 +78,11 @@ needed). No body.
 
 Public. Body: `{ email }`. Always **200** regardless of whether the email
 is registered (doesn't leak account existence). If it is, queues a
-verification email with a link to `/auth/email-verification/confirm/`.
-Throttled per-email and per-IP.
+verification email (token TTL 24h) with a link to
+`/auth/email-verification/confirm/`. Throttled per-email and per-IP —
+see [email-integration-spec.md
+§2](email-integration-spec.md#2-email-verification) for the token/rate-limit
+design and delivery mechanism.
 
 ### `POST /api/v1/auth/email-verification/confirm/`
 
@@ -88,6 +94,9 @@ Public. Body: `{ token }`.
 
 `GET /auth/email-verification/confirm/?token=...` is the server-rendered,
 non-JSON equivalent the emailed link points to (not under `/api/v1/`).
+This split (JSON `POST` vs. emailed-link `GET`) deviates from ADR 002 as
+written — see [email-integration-spec.md
+§2](email-integration-spec.md#2-email-verification) for why.
 
 ### `POST /api/v1/auth/password/change/`
 
@@ -99,11 +108,20 @@ Auth required (cookie + CSRF). Body: `{ old_password, new_password }`.
   other session.
 - **400** `invalid_old_password` — `old_password` doesn't match.
 
+No email is sent on this trigger — the response itself is the
+confirmation, and the caller already proved possession of the old
+password (unlike the reset flow below, where an emailed link *is* the
+proof of ownership).
+
 ### `POST /api/v1/auth/password/reset/request/`
 
 Public. Body: `{ email }`. Same non-leaking **200**-always behavior as
-email-verification request; queues a reset email linking to
-`/auth/password-reset/confirm/`. Throttled per-email and per-IP.
+email-verification request; queues a reset email (token TTL **1 hour** —
+shorter than verification's 24h, since a leaked reset token is
+higher-stakes) linking to `/auth/password-reset/confirm/`. Throttled
+per-email and per-IP — see [email-integration-spec.md
+§3](email-integration-spec.md#3-email-notifications) for the token/rate-limit
+design.
 
 ### `POST /api/v1/auth/password/reset/confirm/`
 
@@ -115,7 +133,9 @@ Public. Body: `{ token, new_password }`.
 `GET`/`POST /auth/password-reset/confirm/?token=...` is the server-rendered
 form the emailed link points to (not under `/api/v1/`) — unlike email
 verification this needs an actual form since the user supplies a new
-password.
+password. See [email-integration-spec.md
+§3](email-integration-spec.md#3-email-notifications) ("Reset confirm
+page") for the GET/POST form contract.
 
 ### `GET/PATCH /api/v1/users/me/`
 
@@ -174,7 +194,11 @@ Changing `date`, `format`, or `location` moves every currently `CONFIRMED`
 participant to `reconfirmation_required` (with a
 `reconfirmation_deadline`) and emails them — see [Database
 schema](../README.md#database-schema) and
-`docs/email-integration-spec.md` §6.
+[email-integration-spec.md §3](email-integration-spec.md#3-email-notifications)
+for the email trigger, or
+[§6](email-integration-spec.md#6-reconfirmation_required-ttl-expiration-job)
+for what happens if the participant doesn't reconfirm in time (the
+reservation is auto-released and they're emailed again).
 
 ### `DELETE /api/v1/events/{id}/`
 
@@ -191,6 +215,12 @@ Auth required. Self-registers the requester as a participant (status
 - **409** `already_finalized` — already confirmed.
 - **409** `capacity_exceeded` — event is full.
 - **400** `invalid_request` — other domain validation failure.
+
+On success, emails the participant a registration-confirmed notice — see
+the trigger table in
+[email-integration-spec.md §3](email-integration-spec.md#3-email-notifications).
+`invite/`, `accept/`, `reject/`, and `cancel/` below each send their own
+participant-facing notification the same way.
 
 ### `POST /api/v1/events/{id}/invite/`
 
@@ -241,5 +271,5 @@ emailed links, unauthenticated and outside `/api/v1/`:
 - `GET /auth/email-verification/confirm/?token=...`
 - `GET/POST /auth/password-reset/confirm/?token=...`
 
-See `docs/email-integration-spec.md` for the full email-flow spec these
-implement.
+See [email-integration-spec.md §8](email-integration-spec.md#8-api-endpoints-reference)
+for their request/response shapes.
